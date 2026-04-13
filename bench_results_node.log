@@ -1,45 +1,40 @@
 ========================================
-Benchmark Tail Call vs Normal — Node.js
-2026-04-13T13:11:28.910Z
-RAM total: 7723MB  |  Disponível: 2945MB
+Benchmark — Recursão Tail Call em Node.js
+2026-04-13T18:40:38.544Z
+RAM total: 7723MB  |  Disponível: 3663MB
 Limites: RAM<500MB  |  Timeout<10s
 ========================================
 
-NOTA: Node.js tem TCO apenas em strict mode e condições específicas.
-  Na prática é não confiável e desabilitado no V8.
-  Normal    = recursão real (empilha frames)
-  Loop/Tail = while/for equivalente ao tail call
-  BigInt    = inteiros de precisão arbitrária (nativo no Node 10+)
+NOTA: Node.js V8 não garante TCO — mesmo código em tail position
+  empilha frames e estoura com n~15.000. Loop é o equivalente real.
+  Normal    = recursão pura (estoura cedo)
+  Loop/Tail = while/for equivalente ao tail call das outras linguagens
 
 
-TESTE 1: Factorial n=10 — 500.000 iterações (sem bignum)
---------------------------------------------------------
-  Normal       Tempo:    397.9 ms  |  Heap Δ:       96.9 KB  |  RAM processo: 54MB
-  Loop/Tail    Tempo:    423.3 ms  |  Heap Δ:     1885.8 KB  |  RAM processo: 54MB
+TESTE 1: Algorithm 1 — Factorial (self-tail)
+--------------------------------------------
+  n=10, 500.000 iterações (sem bignum)
+  Normal         Tempo:    417.8 ms  |  Heap Δ:       95.9 KB  |  RAM: 52MB
+  Loop/Tail      Tempo:    441.4 ms  |  Heap Δ:     1634.6 KB  |  RAM: 52MB
 
-TESTE 2: Factorial n=1000 — 10.000 iterações (com bignum)
----------------------------------------------------------
-  Normal       Tempo:   1783.1 ms  |  Heap Δ:     4400.9 KB  |  RAM processo: 66MB
-  Loop/Tail    Tempo:   1984.1 ms  |  Heap Δ:      958.8 KB  |  RAM processo: 66MB
+  n=1000, 10.000 iterações (com bignum)
+  Normal         Tempo:   1809.6 ms  |  Heap Δ:    -1639.1 KB  |  RAM: 64MB
+  Loop/Tail      Tempo:   1905.1 ms  |  Heap Δ:      988.4 KB  |  RAM: 64MB
 
-TESTE 3: Fibonacci n=30 — 100 iterações (exponencial vs linear)
----------------------------------------------------------------
-  Normal       Tempo:    695.8 ms  |  Heap Δ:        0.4 KB  |  RAM processo: 66MB
-  Loop/Tail    Tempo:      0.6 ms  |  Heap Δ:      609.8 KB  |  RAM processo: 66MB
+TESTE 2: Algorithm 2 — Mutually recursive even/odd
+--------------------------------------------------
+  n=1000, 500.000 iterações
+  Normal even    Tempo:    238.5 ms  |  Heap Δ:       62.5 KB  |  RAM: 65MB
+  Loop   even    Tempo:    245.1 ms  |  Heap Δ:       15.7 KB  |  RAM: 65MB
+  Normal odd     Tempo:    249.1 ms  |  Heap Δ:        8.3 KB  |  RAM: 65MB
 
-TESTE 4: Soma de lista 100.000 elementos — 200 iterações
---------------------------------------------------------
-  Normal       STACK OVERFLOW! ✗
-  Loop/Tail    Tempo:     35.6 ms  |  Heap Δ:    -7146.6 KB  |  RAM processo: 68MB
-
-TESTE 5: Limite da stack
-------------------------
-  Loop  factorial 100k  ... OK! (456574 dígitos)
-  Normal factorial 15k  ... OK! (56130 dígitos)
-  Loop  soma lista 1M   ... OK! (soma = 499999500000)
-  Normal soma lista 10k ... STACK OVERFLOW! ✗  (RangeError: Maximum call stack size exceeded)
+TESTE 3: Algorithm 3 — Three-state machine (A→B→C→A)
+----------------------------------------------------
+  k=999 (múltiplo de 3), 500.000 iterações
+  Normal A→B→C   Tempo:    219.8 ms  |  Heap Δ:      178.3 KB  |  RAM: 65MB
+  Loop   A→B→C   Tempo:    403.0 ms  |  Heap Δ:        8.3 KB  |  RAM: 65MB
 
 ========================================
 Fim do benchmark
-2026-04-13T13:11:38.420Z
+2026-04-13T18:40:44.485Z
 ========================================

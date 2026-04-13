@@ -6,7 +6,7 @@ defmodule BenchLogger do
     {:ok, file} = File.open("bench_results_elixir.log", [:write, :utf8])
     timestamp = DateTime.utc_now() |> DateTime.to_string()
     write(file, "========================================")
-    write(file, "Benchmark Tail Call vs Normal")
+    write(file, "Benchmark — Recursão Tail Call em Elixir")
     write(file, "#{timestamp}")
     write(file, "========================================\n")
     file
@@ -27,33 +27,76 @@ defmodule BenchLogger do
   end
 end
 
+# ============================================================
+# Algorithm 1 — Factorial with accumulator (self-tail)
+# ============================================================
 defmodule Factorial do
+  # Sem tail call — recursão normal
   def normal(0), do: 1
   def normal(n), do: n * normal(n - 1)
 
+  # Algorithm 1: FACTORIAL(n, acc)
+  #   if n = 0 then return acc
+  #   else return FACTORIAL(n − 1, n × acc)
   def tail(n), do: tail(n, 1)
   defp tail(0, acc), do: acc
   defp tail(n, acc), do: tail(n - 1, n * acc)
 end
 
-defmodule Fibonacci do
-  def normal(n) when n < 2, do: n
-  def normal(n), do: normal(n - 1) + normal(n - 2)
+# ============================================================
+# Algorithm 2 — Mutually recursive even/odd
+# ============================================================
+defmodule EvenOdd do
+  # Versão normal — sem ser mutuamente recursiva
+  def even_normal(0), do: true
+  def even_normal(n), do: odd_normal(n - 1)
 
-  def tail(n), do: tail(n, 0, 1)
-  defp tail(0, a, _), do: a
-  defp tail(n, a, b), do: tail(n - 1, b, a + b)
+  def odd_normal(0), do: false
+  def odd_normal(n), do: even_normal(n - 1)
+
+  # Algorithm 2: ISEVEN e ISODD mutuamente recursivos
+  # ISEVEN(n): if n=0 → true, else → ISODD(n−1)
+  # ISODD(n):  if n=0 → false, else → ISEVEN(n−1)
+  # Em Elixir, chamadas em posição de cauda entre módulos
+  # também são otimizadas pela BEAM
+  def is_even(0), do: true
+  def is_even(n), do: is_odd(n - 1)   # tail position → TCO
+
+  def is_odd(0), do: false
+  def is_odd(n), do: is_even(n - 1)   # tail position → TCO
 end
 
-defmodule SumList do
-  def normal([]), do: 0
-  def normal([h | t]), do: h + normal(t)
+# ============================================================
+# Algorithm 3 — Three-state machine (A → B → C → A)
+# ============================================================
+defmodule StateMachine do
+  # Versão normal — sem garantia de TCO entre estados
+  def state_a_normal(0), do: :finished
+  def state_a_normal(k), do: state_b_normal(k - 1)
 
-  def tail(list), do: tail(list, 0)
-  defp tail([], acc), do: acc
-  defp tail([h | t], acc), do: tail(t, acc + h)
+  def state_b_normal(0), do: :finished
+  def state_b_normal(k), do: state_c_normal(k - 1)
+
+  def state_c_normal(0), do: :finished
+  def state_c_normal(k), do: state_a_normal(k - 1)
+
+  # Algorithm 3: máquina de três estados com TCO
+  # STATEA(k): if k=0 → finished, else → STATEB(k−1)
+  # STATEB(k): if k=0 → finished, else → STATEC(k−1)
+  # STATEC(k): if k=0 → finished, else → STATEA(k−1)
+  def state_a(0), do: :finished
+  def state_a(k), do: state_b(k - 1)   # tail position → TCO
+
+  def state_b(0), do: :finished
+  def state_b(k), do: state_c(k - 1)   # tail position → TCO
+
+  def state_c(0), do: :finished
+  def state_c(k), do: state_a(k - 1)   # tail position → TCO
 end
 
+# ============================================================
+# Benchmark Engine
+# ============================================================
 defmodule Bench do
   def section(file, title) do
     BenchLogger.write(file, "\n#{title}")
@@ -65,7 +108,7 @@ defmodule Bench do
 
     {_, words_before, _} = :erlang.statistics(:garbage_collection)
     heap_before = :erlang.process_info(self(), :total_heap_size) |> elem(1)
-    mem_before = (heap_before + words_before) * :erlang.system_info(:wordsize)
+    mem_before  = (heap_before + words_before) * :erlang.system_info(:wordsize)
 
     t0 = System.monotonic_time(:millisecond)
     Enum.each(1..iterations, fn _ -> func.() end)
@@ -73,26 +116,24 @@ defmodule Bench do
 
     {_, words_after, _} = :erlang.statistics(:garbage_collection)
     heap_after = :erlang.process_info(self(), :total_heap_size) |> elem(1)
-    mem_after = (heap_after + words_after) * :erlang.system_info(:wordsize)
+    mem_after  = (heap_after + words_after) * :erlang.system_info(:wordsize)
 
     ms  = t1 - t0
     mem = (mem_after - mem_before) / 1024.0
 
-    line = :io_lib.format("  ~-12s Tempo: ~6.1f ms  |  Mem alocada: ~12.1f KB",
+    line = :io_lib.format("  ~-14s Tempo: ~6.1f ms  |  Mem alocada: ~12.1f KB",
                           [label, ms * 1.0, mem])
-          |> IO.chardata_to_string()
+           |> IO.chardata_to_string()
 
     BenchLogger.write(file, line)
   end
 
-  def overflow(file, label, func) do
+  def overflow(file, label, func, result_fn) do
     IO.write("  #{label} ... ")
     IO.write(file, "  #{label} ... ")
-
     try do
       result = func.()
-      digits = result |> Integer.to_string() |> String.length()
-      BenchLogger.write(file, "OK! (#{digits} dígitos)")
+      BenchLogger.write(file, "OK! (#{result_fn.(result)})")
     rescue
       e -> BenchLogger.write(file, "STACK OVERFLOW! ✗  (#{Exception.message(e)})")
     end
@@ -105,44 +146,37 @@ end
 file = BenchLogger.start()
 
 # ============================================================
-# TESTE 1 — Factorial n=10 sem bignum
+# TESTE 1 — Algorithm 1: Factorial with accumulator
 # ============================================================
-Bench.section(file, "TESTE 1: Factorial n=10 — 500.000 iterações (sem bignum)")
-Bench.run(file, "Normal   ", fn -> Factorial.normal(10) end, 500_000)
-Bench.run(file, "Tail Call", fn -> Factorial.tail(10) end,   500_000)
+Bench.section(file, "TESTE 1: Algorithm 1 — Factorial (self-tail)")
+BenchLogger.write(file, "  n=10, 500.000 iterações (sem bignum)")
+Bench.run(file, "Normal      ", fn -> Factorial.normal(10) end, 500_000)
+Bench.run(file, "Tail (acc)  ", fn -> Factorial.tail(10) end,   500_000)
+
+BenchLogger.write(file, "")
+BenchLogger.write(file, "  n=1000, 10.000 iterações (com bignum)")
+Bench.run(file, "Normal      ", fn -> Factorial.normal(1_000) end, 10_000)
+Bench.run(file, "Tail (acc)  ", fn -> Factorial.tail(1_000) end,   10_000)
 
 # ============================================================
-# TESTE 2 — Factorial n=1000 com bignum
+# TESTE 2 — Algorithm 2: Mutually recursive even/odd
 # ============================================================
-Bench.section(file, "TESTE 2: Factorial n=1000 — 10.000 iterações (com bignum)")
-Bench.run(file, "Normal   ", fn -> Factorial.normal(1000) end, 10_000)
-Bench.run(file, "Tail Call", fn -> Factorial.tail(1000) end,   10_000)
+Bench.section(file, "TESTE 2: Algorithm 2 — Mutually recursive even/odd")
+BenchLogger.write(file, "  n=1000, 500.000 iterações")
+Bench.run(file, "Normal even ", fn -> EvenOdd.even_normal(1_000) end, 500_000)
+Bench.run(file, "Tail   even ", fn -> EvenOdd.is_even(1_000) end,     500_000)
+Bench.run(file, "Normal odd  ", fn -> EvenOdd.odd_normal(1_000) end,  500_000)
+Bench.run(file, "Tail   odd  ", fn -> EvenOdd.is_odd(1_000) end,      500_000)
+
 
 # ============================================================
-# TESTE 3 — Fibonacci exponencial vs linear
+# TESTE 3 — Algorithm 3: Three-state machine A→B→C→A
 # ============================================================
-Bench.section(file, "TESTE 3: Fibonacci n=30 — 100 iterações (exponencial vs linear)")
-Bench.run(file, "Normal   ", fn -> Fibonacci.normal(30) end, 100)
-Bench.run(file, "Tail Call", fn -> Fibonacci.tail(30) end,   100)
+Bench.section(file, "TESTE 3: Algorithm 3 — Three-state machine (A→B→C→A)")
+BenchLogger.write(file, "  k=999 (múltiplo de 3), 500.000 iterações")
+Bench.run(file, "Normal A→B→C", fn -> StateMachine.state_a_normal(999) end, 500_000)
+Bench.run(file, "Tail   A→B→C", fn -> StateMachine.state_a(999) end,        500_000)
 
-# ============================================================
-# TESTE 4 — Soma de lista grande
-# ============================================================
-Bench.section(file, "TESTE 4: Soma de lista 100.000 elementos — 200 iterações")
-big_list = Enum.to_list(0..99_999)
-Bench.run(file, "Normal   ", fn -> SumList.normal(big_list) end, 200)
-Bench.run(file, "Tail Call", fn -> SumList.tail(big_list) end,   200)
-
-# ============================================================
-# TESTE 5 — Stack overflow
-# ============================================================
-Bench.section(file, "TESTE 5: Limite da stack — n=100.000")
-Bench.overflow(file, "Tail  factorial 100k ", fn -> Factorial.tail(1000_000) end)
-Bench.overflow(file, "Normal factorial 100k", fn -> Factorial.normal(1000_000) end)
-
-big_list_2 = Enum.to_list(0..999_999)
-Bench.overflow(file, "Tail  soma lista 1M  ", fn -> SumList.tail(big_list_2) end)
-Bench.overflow(file, "Normal soma lista 1M ", fn -> SumList.normal(big_list_2) end)
 
 # ============================================================
 # Fecha log

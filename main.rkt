@@ -14,7 +14,7 @@
 
 (define (log-start)
   (log-write "========================================")
-  (log-write "Benchmark Tail Call vs Normal — Racket")
+  (log-write "Benchmark — Recursão Tail Call em Racket")
   (log-write (format "~a" (date->string (current-date) #t)))
   (log-write "========================================\n"))
 
@@ -27,32 +27,80 @@
   (displayln "\nLog salvo em: bench_results_scheme.log"))
 
 ;; ============================================================
-;; IMPLEMENTAÇÕES
+;; Algorithm 1 — Factorial with accumulator (self-tail)
 ;; ============================================================
-(define (factorial-normal n)
-  (if (= n 0) 1 (* n (factorial-normal (- n 1)))))
 
+;; Sem tail call
+(define (factorial-normal n)
+  (if (= n 0) 1
+      (* n (factorial-normal (- n 1)))))
+
+;; Algorithm 1: FACTORIAL(n, acc)
+;;   if n = 0 then return acc
+;;   else return FACTORIAL(n − 1, n × acc)
 (define (factorial-tail n)
   (define (loop n acc)
-    (if (= n 0) acc (loop (- n 1) (* acc n))))
+    (if (= n 0) acc
+        (loop (- n 1) (* acc n))))
   (loop n 1))
 
-(define (fib-normal n)
-  (if (< n 2) n
-      (+ (fib-normal (- n 1)) (fib-normal (- n 2)))))
+;; ============================================================
+;; Algorithm 2 — Mutually recursive even/odd
+;; ============================================================
 
-(define (fib-tail n)
-  (define (loop n a b)
-    (if (= n 0) a (loop (- n 1) b (+ a b))))
-  (loop n 0 1))
+;; Versão normal
+(define (even-normal n)
+  (if (= n 0) #t
+      (odd-normal (- n 1))))
 
-(define (sum-normal lst)
-  (if (null? lst) 0 (+ (car lst) (sum-normal (cdr lst)))))
+(define (odd-normal n)
+  (if (= n 0) #f
+      (even-normal (- n 1))))
 
-(define (sum-tail lst)
-  (define (loop lst acc)
-    (if (null? lst) acc (loop (cdr lst) (+ acc (car lst)))))
-  (loop lst 0))
+;; Algorithm 2: ISEVEN e ISODD mutuamente recursivos
+;;   ISEVEN(n): if n=0 → true,  else → ISODD(n−1)
+;;   ISODD(n):  if n=0 → false, else → ISEVEN(n−1)
+;; Racket garante TCO em chamadas de cauda entre funções distintas
+(define (is-even n)
+  (if (= n 0) #t
+      (is-odd (- n 1))))    ; tail position → TCO
+
+(define (is-odd n)
+  (if (= n 0) #f
+      (is-even (- n 1))))   ; tail position → TCO
+
+;; ============================================================
+;; Algorithm 3 — Three-state machine (A → B → C → A)
+;; ============================================================
+
+;; Versão normal
+(define (state-a-normal k)
+  (if (= k 0) 'finished
+      (state-b-normal (- k 1))))
+
+(define (state-b-normal k)
+  (if (= k 0) 'finished
+      (state-c-normal (- k 1))))
+
+(define (state-c-normal k)
+  (if (= k 0) 'finished
+      (state-a-normal (- k 1))))
+
+;; Algorithm 3: máquina de três estados com TCO
+;;   STATEA(k): if k=0 → finished, else → STATEB(k−1)
+;;   STATEB(k): if k=0 → finished, else → STATEC(k−1)
+;;   STATEC(k): if k=0 → finished, else → STATEA(k−1)
+(define (state-a k)
+  (if (= k 0) 'finished
+      (state-b (- k 1))))   ; tail position → TCO
+
+(define (state-b k)
+  (if (= k 0) 'finished
+      (state-c (- k 1))))   ; tail position → TCO
+
+(define (state-c k)
+  (if (= k 0) 'finished
+      (state-a (- k 1))))   ; tail position → TCO
 
 ;; ============================================================
 ;; BENCHMARK ENGINE
@@ -80,8 +128,7 @@
   (display (format "  ~a ... " label))
   (display (format "  ~a ... " label) log-port)
   (with-handlers ([exn:fail?
-                   (lambda (e)
-                     (log-write "STACK OVERFLOW! ✗"))])
+                   (lambda (e) (log-write "STACK OVERFLOW! ✗"))])
     (define result (thunk))
     (log-write (format "OK! (~a)" (result-fn result)))))
 
@@ -90,41 +137,40 @@
 ;; ============================================================
 (log-start)
 
-(section "TESTE 1: Factorial n=10 — 500.000 iterações (sem bignum)")
-(benchmark! "Normal   " (lambda () (factorial-normal 10)) 500000)
-(benchmark! "Tail Call" (lambda () (factorial-tail   10)) 500000)
+;; ----------------------------------------------------------
+;; TESTE 1 — Algorithm 1: Factorial with accumulator
+;; ----------------------------------------------------------
+(section "TESTE 1: Algorithm 1 — Factorial (self-tail)")
 
-(section "TESTE 2: Factorial n=1000 — 10.000 iterações (com bignum)")
-(benchmark! "Normal   " (lambda () (factorial-normal 1000)) 10000)
-(benchmark! "Tail Call" (lambda () (factorial-tail   1000)) 10000)
+(log-write "  n=10, 500.000 iterações (sem bignum)")
+(benchmark! "Normal      " (lambda () (factorial-normal 10)) 500000)
+(benchmark! "Tail (acc)  " (lambda () (factorial-tail   10)) 500000)
 
-(section "TESTE 3: Fibonacci n=30 — 100 iterações (exponencial vs linear)")
-(benchmark! "Normal   " (lambda () (fib-normal 30)) 100)
-(benchmark! "Tail Call" (lambda () (fib-tail   30)) 100)
+(log-write "")
+(log-write "  n=1000, 10.000 iterações (com bignum)")
+(benchmark! "Normal      " (lambda () (factorial-normal 1000)) 10000)
+(benchmark! "Tail (acc)  " (lambda () (factorial-tail   1000)) 10000)
 
-(section "TESTE 4: Soma de lista 100.000 elementos — 200 iterações")
-(define big-list (build-list 100000 (lambda (i) i)))
-(benchmark! "Normal   " (lambda () (sum-normal big-list)) 200)
-(benchmark! "Tail Call" (lambda () (sum-tail   big-list)) 200)
+;; ----------------------------------------------------------
+;; TESTE 2 — Algorithm 2: Mutually recursive even/odd
+;; ----------------------------------------------------------
+(section "TESTE 2: Algorithm 2 — Mutually recursive even/odd")
 
-(section "TESTE 5: Limite da stack — n=100.000")
+(log-write "  n=1000, 500.000 iterações")
+(benchmark! "Normal even " (lambda () (even-normal 1000)) 500000)
+(benchmark! "Tail   even " (lambda () (is-even     1000)) 500000)
+(benchmark! "Normal odd  " (lambda () (odd-normal  1000)) 500000)
+(benchmark! "Tail   odd  " (lambda () (is-odd      1000)) 500000)
 
-(overflow-test "Tail  factorial 100k "
-               (lambda () (factorial-tail 100000))
-               (lambda (r) (format "~a dígitos" (string-length (number->string r)))))
 
-(overflow-test "Normal factorial 100k"
-               (lambda () (factorial-normal 100000))
-               (lambda (r) (format "~a dígitos" (string-length (number->string r)))))
+;; ----------------------------------------------------------
+;; TESTE 3 — Algorithm 3: Three-state machine A→B→C→A
+;; ----------------------------------------------------------
+(section "TESTE 3: Algorithm 3 — Three-state machine (A→B→C→A)")
 
-(define big-list-2 (build-list 1000000 (lambda (i) i)))
+(log-write "  k=999 (múltiplo de 3), 500.000 iterações")
+(benchmark! "Normal A→B→C" (lambda () (state-a-normal 999)) 500000)
+(benchmark! "Tail   A→B→C" (lambda () (state-a        999)) 500000)
 
-(overflow-test "Tail  soma lista 1M  "
-               (lambda () (sum-tail big-list-2))
-               (lambda (r) (format "soma = ~a" r)))
-
-(overflow-test "Normal soma lista 1M "
-               (lambda () (sum-normal big-list-2))
-               (lambda (r) (format "soma = ~a" r)))
 
 (log-close)
