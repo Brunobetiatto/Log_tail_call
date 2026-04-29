@@ -46,14 +46,11 @@ class ResourceMonitor:
         while self.running:
             try:
                 ram_mb  = self.process.memory_info().rss / 1024 / 1024
-                cpu_pct = self.process.cpu_percent(interval=0.1)
                 if ram_mb > MAX_RAM_MB:
                     self.exceeded = True
-                    self.reason   = f"RAM excedida: {ram_mb:.0f}MB > {MAX_RAM_MB}MB"
+                    self.reason   = "OOM (RAM Excedida)"
                     self.running  = False
                     os.kill(os.getpid(), 9)
-                if cpu_pct > MAX_CPU_PCT:
-                    self.reason = f"CPU alta: {cpu_pct:.0f}%"
             except Exception:
                 pass
             time.sleep(0.1)
@@ -61,10 +58,10 @@ class ResourceMonitor:
 monitor = ResourceMonitor()
 
 # ============================================================
-# LOGGER
+# LOGGER (Formato CSV)
 # ============================================================
 class BenchLogger:
-    def __init__(self, filename="bench_results_python.log"):
+    def __init__(self, filename="bench_results_python.csv"):
         self.file     = open(filename, "w", encoding="utf-8")
         self.filename = filename
 
@@ -74,42 +71,22 @@ class BenchLogger:
         self.file.flush()
 
     def start(self):
-        ram_total = psutil.virtual_memory().total / 1024 / 1024
-        ram_avail = psutil.virtual_memory().available / 1024 / 1024
-        cpu_count = psutil.cpu_count()
-        self.write("========================================")
-        self.write("Benchmark — Recursão Tail Call em Python")
-        self.write(str(datetime.utcnow()))
-        self.write(f"RAM total: {ram_total:.0f}MB  |  Disponível: {ram_avail:.0f}MB  |  CPUs: {cpu_count}")
-        self.write(f"Limites: RAM<{MAX_RAM_MB}MB  |  CPU<{MAX_CPU_PCT}%  |  Timeout<{MAX_TIME_SEC}s")
-        self.write("========================================\n")
+        # Escreve o cabeçalho das colunas do CSV
+        self.write("Data,Algoritmo,Implementacao,N,Iteracoes,Tempo_ms,Memoria_KB")
 
     def close(self):
-        self.write("\n========================================")
-        self.write("Fim do benchmark")
-        self.write(str(datetime.utcnow()))
-        self.write("========================================")
         self.file.close()
         print(f"\nLog salvo em: {self.filename}")
-
-    def section(self, title):
-        self.write(f"\n{title}")
-        self.write("-" * len(title))
 
 # ============================================================
 # Algorithm 1 — Factorial with accumulator (self-tail)
 # ============================================================
 
-# Sem tail call
 def factorial_normal(n):
     if n == 0:
         return 1
     return n * factorial_normal(n - 1)
 
-# Algorithm 1: FACTORIAL(n, acc)
-#   if n = 0 then return acc
-#   else return FACTORIAL(n − 1, n × acc)
-# Python não tem TCO — simulamos com loop
 def factorial_tail(n):
     acc = 1
     while n > 0:
@@ -121,7 +98,6 @@ def factorial_tail(n):
 # Algorithm 2 — Mutually recursive even/odd
 # ============================================================
 
-# Versão normal — mutuamente recursiva
 def even_normal(n):
     if n == 0:
         return True
@@ -132,10 +108,6 @@ def odd_normal(n):
         return False
     return even_normal(n - 1)
 
-# Algorithm 2: ISEVEN e ISODD
-#   ISEVEN(n): if n=0 → true,  else → ISODD(n−1)
-#   ISODD(n):  if n=0 → false, else → ISEVEN(n−1)
-# Loop equivalente — Python não tem TCO mútuo
 def is_even_loop(n):
     while True:
         if n == 0: return True
@@ -147,7 +119,6 @@ def is_even_loop(n):
 # Algorithm 3 — Three-state machine (A → B → C → A)
 # ============================================================
 
-# Versão normal — mutuamente recursiva
 def state_a_normal(k):
     if k == 0: return "finished"
     return state_b_normal(k - 1)
@@ -160,8 +131,6 @@ def state_c_normal(k):
     if k == 0: return "finished"
     return state_a_normal(k - 1)
 
-# Algorithm 3: STATEA → STATEB → STATEC → STATEA
-#   Loop equivalente — único jeito de não estoura stack em Python
 def state_a_loop(k):
     state = "A"
     while True:
@@ -174,7 +143,7 @@ def state_a_loop(k):
 # ============================================================
 # BENCHMARK ENGINE COM PROTEÇÕES
 # ============================================================
-def run_bench(logger, label, func, iterations):
+def run_bench(logger, algo, impl, n, iterations, func):
     result_holder = [None]
     error_holder  = [None]
     done_event    = threading.Event()
@@ -194,11 +163,11 @@ def run_bench(logger, label, func, iterations):
             tracemalloc.stop()
             result_holder[0] = ((t1 - t0) * 1000, peak / 1024.0)
         except RecursionError:
-            error_holder[0] = "RecursionError (stack overflow)"
+            error_holder[0] = "STACK OVERFLOW"
         except MemoryError:
-            error_holder[0] = "MemoryError (RAM esgotada)"
+            error_holder[0] = "MEMORY ERROR"
         except Exception as e:
-            error_holder[0] = str(e)
+            error_holder[0] = f"ERRO: {str(e)}"
         finally:
             done_event.set()
 
@@ -208,56 +177,24 @@ def run_bench(logger, label, func, iterations):
     finished = done_event.wait(timeout=MAX_TIME_SEC)
     monitor.stop()
 
+    # Formatação da data atual para o CSV
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Se a thread não terminou a tempo
     if not finished:
         tracemalloc.stop()
-        logger.write(f"  {label:14s} TIMEOUT! (>{MAX_TIME_SEC}s) ✗")
+        logger.write(f'"{timestamp}","{algo}","{impl}",{n},{iterations},"TIMEOUT",""')
         return
+    
+    # Se houve estouro de pilha ou memória
     if error_holder[0]:
-        logger.write(f"  {label:14s} ERRO: {error_holder[0]} ✗")
+        logger.write(f'"{timestamp}","{algo}","{impl}",{n},{iterations},"{error_holder[0]}",""')
         return
 
+    # Execução bem-sucedida
     ms, mem_kb = result_holder[0]
-    ram_atual  = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
-    logger.write(
-        f"  {label:14s} Tempo: {ms:8.1f} ms  |"
-        f"  Mem pico: {mem_kb:10.1f} KB  |"
-        f"  RAM processo: {ram_atual:.0f}MB"
-    )
+    logger.write(f'"{timestamp}","{algo}","{impl}",{n},{iterations},{ms:.1f},{mem_kb:.1f}')
 
-def overflow_test(logger, label, func, result_fn):
-    sys.stdout.write(f"  {label} ... ")
-    sys.stdout.flush()
-    logger.file.write(f"  {label} ... ")
-
-    result_holder = [None]
-    error_holder  = [None]
-    done_event    = threading.Event()
-
-    def worker():
-        try:
-            result_holder[0] = func()
-        except RecursionError:
-            error_holder[0] = "STACK OVERFLOW! ✗  (RecursionError)"
-        except MemoryError:
-            error_holder[0] = "MEMORY ERROR! ✗"
-        except Exception as e:
-            error_holder[0] = str(e)
-        finally:
-            done_event.set()
-
-    monitor.start()
-    t = threading.Thread(target=worker, daemon=True)
-    t.start()
-    finished = done_event.wait(timeout=MAX_TIME_SEC)
-    monitor.stop()
-
-    if not finished:
-        logger.write(f"TIMEOUT! (>{MAX_TIME_SEC}s) ✗")
-        return
-    if error_holder[0]:
-        logger.write(error_holder[0])
-        return
-    logger.write(f"OK! ({result_fn(result_holder[0])})")
 
 # ============================================================
 # TESTES
@@ -265,44 +202,34 @@ def overflow_test(logger, label, func, result_fn):
 logger = BenchLogger()
 logger.start()
 
-logger.write("""NOTA: Python não tem TCO (decisão deliberada do Guido van Rossum).
-  Loop/Tail = while equivalente ao tail call das outras linguagens\n""")
-
 # ----------------------------------------------------------
 # TESTE 1 — Algorithm 1: Factorial with accumulator
 # ----------------------------------------------------------
-logger.section("TESTE 1: Algorithm 1 — Factorial (self-tail)")
+# n=10, 500.000 iterações (sem bignum)
+run_bench(logger, "Factorial", "Normal", 10, 500_000, lambda: factorial_normal(10))
+run_bench(logger, "Factorial", "Loop/Tail", 10, 500_000, lambda: factorial_tail(10))
 
-logger.write("  n=10, 500.000 iterações (sem bignum)")
-run_bench(logger, "Normal      ", lambda: factorial_normal(10), 500_000)
-run_bench(logger, "Loop/Tail   ", lambda: factorial_tail(10),   500_000)
-
-logger.write("")
-logger.write("  n=1000, 10.000 iterações (com bignum)")
-run_bench(logger, "Normal      ", lambda: factorial_normal(1000), 10_000)
-run_bench(logger, "Loop/Tail   ", lambda: factorial_tail(1000),   10_000)
+# n=1000, 10.000 iterações (com bignum)
+run_bench(logger, "Factorial", "Normal", 1000, 10_000, lambda: factorial_normal(1000))
+run_bench(logger, "Factorial", "Loop/Tail", 1000, 10_000, lambda: factorial_tail(1000))
 
 
 # ----------------------------------------------------------
 # TESTE 2 — Algorithm 2: Mutually recursive even/odd
 # ----------------------------------------------------------
-logger.section("TESTE 2: Algorithm 2 — Mutually recursive even/odd")
+# n=1000, 500.000 iterações
+run_bench(logger, "Mutually Rec (Even)", "Normal", 1000, 500_000, lambda: even_normal(1_000))
+run_bench(logger, "Mutually Rec (Even)", "Loop", 1000, 500_000, lambda: is_even_loop(1_000))
 
-logger.write("  n=1000, 500.000 iterações")
-run_bench(logger, "Normal even ", lambda: even_normal(1_000), 500_000)
-run_bench(logger, "Loop   even ", lambda: is_even_loop(1_000), 500_000)
-run_bench(logger, "Normal odd  ", lambda: odd_normal(1_000),  500_000)
-run_bench(logger, "Loop   odd  ", lambda: is_even_loop(1_000),  500_000)
+run_bench(logger, "Mutually Rec (Odd)", "Normal", 1000, 500_000, lambda: odd_normal(1_000))
+run_bench(logger, "Mutually Rec (Odd)", "Loop", 1000, 500_000, lambda: is_even_loop(1_000))
 
 
 # ----------------------------------------------------------
 # TESTE 3 — Algorithm 3: Three-state machine A→B→C→A
 # ----------------------------------------------------------
-logger.section("TESTE 3: Algorithm 3 — Three-state machine (A→B→C→A)")
-
-logger.write("  k=999 (múltiplo de 3), 500.000 iterações")
-run_bench(logger, "Normal A→B→C", lambda: state_a_normal(999), 500_000)
-run_bench(logger, "Loop   A→B→C", lambda: state_a_loop(999),   500_000)
-
+# k=999 (múltiplo de 3), 500.000 iterações
+run_bench(logger, "State Machine", "Normal", 999, 500_000, lambda: state_a_normal(999))
+run_bench(logger, "State Machine", "Loop", 999, 500_000, lambda: state_a_loop(999))
 
 logger.close()

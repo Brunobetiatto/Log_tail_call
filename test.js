@@ -12,10 +12,10 @@ const MAX_RAM_MB   = 500;
 const MAX_TIME_SEC = 10;
 
 // ============================================================
-// LOGGER
+// LOGGER (Formato CSV)
 // ============================================================
 class BenchLogger {
-  constructor(filename = "bench_results_node.log") {
+  constructor(filename = "bench_results_node.csv") {
     this.stream   = fs.createWriteStream(filename, { encoding: "utf-8" });
     this.filename = filename;
   }
@@ -26,28 +26,13 @@ class BenchLogger {
   }
 
   start() {
-    const mem   = os.totalmem() / 1024 / 1024;
-    const avail = os.freemem()  / 1024 / 1024;
-    this.write("========================================");
-    this.write("Benchmark — Recursão Tail Call em Node.js");
-    this.write(new Date().toISOString());
-    this.write(`RAM total: ${mem.toFixed(0)}MB  |  Disponível: ${avail.toFixed(0)}MB`);
-    this.write(`Limites: RAM<${MAX_RAM_MB}MB  |  Timeout<${MAX_TIME_SEC}s`);
-    this.write("========================================\n");
+    // Escreve o cabeçalho das colunas do CSV
+    this.write("Data,Algoritmo,Implementacao,N,Iteracoes,Tempo_ms,Memoria_KB");
   }
 
   close() {
-    this.write("\n========================================");
-    this.write("Fim do benchmark");
-    this.write(new Date().toISOString());
-    this.write("========================================");
     this.stream.end();
     console.log(`\nLog salvo em: ${this.filename}`);
-  }
-
-  section(title) {
-    this.write(`\n${title}`);
-    this.write("-".repeat(title.length));
   }
 }
 
@@ -58,29 +43,15 @@ function getRamMB() {
   return process.memoryUsage().rss / 1024 / 1024;
 }
 
-function checkRam(label, logger) {
-  const ram = getRamMB();
-  if (ram > MAX_RAM_MB) {
-    logger.write(`  ABORTADO: RAM excedida ${ram.toFixed(0)}MB > ${MAX_RAM_MB}MB ✗`);
-    logger.close();
-    process.exit(1);
-  }
-}
-
 // ============================================================
 // Algorithm 1 — Factorial with accumulator (self-tail)
 // ============================================================
 
-// Sem tail call
 function factorialNormal(n) {
   if (n === 0n) return 1n;
   return n * factorialNormal(n - 1n);
 }
 
-// Algorithm 1: FACTORIAL(n, acc)
-//   if n = 0 then return acc
-//   else return FACTORIAL(n − 1, n × acc)
-// Node não tem TCO confiável — simulamos com loop
 function factorialTail(n) {
   let acc = 1n;
   while (n > 0n) {
@@ -94,7 +65,6 @@ function factorialTail(n) {
 // Algorithm 2 — Mutually recursive even/odd
 // ============================================================
 
-// Versão normal
 function evenNormal(n) {
   if (n === 0) return true;
   return oddNormal(n - 1);
@@ -105,22 +75,6 @@ function oddNormal(n) {
   return evenNormal(n - 1);
 }
 
-// Algorithm 2: ISEVEN e ISODD mutuamente recursivos
-//   ISEVEN(n): if n=0 → true,  else → ISODD(n−1)
-//   ISODD(n):  if n=0 → false, else → ISEVEN(n−1)
-// Node não garante TCO — com n grande vai dar stack overflow
-// mesmo sendo tail position no código
-function isEven(n) {
-  if (n === 0) return true;
-  return isOdd(n - 1);
-}
-
-function isOdd(n) {
-  if (n === 0) return false;
-  return isEven(n - 1);
-}
-
-// Versão loop — equivalente ao tail call
 function isEvenLoop(n) {
   while (true) {
     if (n === 0) return true;
@@ -134,7 +88,6 @@ function isEvenLoop(n) {
 // Algorithm 3 — Three-state machine (A → B → C → A)
 // ============================================================
 
-// Versão normal
 function stateANormal(k) {
   if (k === 0) return "finished";
   return stateBNormal(k - 1);
@@ -150,11 +103,6 @@ function stateCNormal(k) {
   return stateANormal(k - 1);
 }
 
-// Algorithm 3: máquina de três estados
-//   STATEA(k): if k=0 → finished, else → STATEB(k−1)
-//   STATEB(k): if k=0 → finished, else → STATEC(k−1)
-//   STATEC(k): if k=0 → finished, else → STATEA(k−1)
-// Versão loop — equivalente ao tail call
 function stateALoop(k) {
   let state = "A";
   while (true) {
@@ -169,24 +117,20 @@ function stateALoop(k) {
 // ============================================================
 // BENCHMARK ENGINE
 // ============================================================
-function runBench(logger, label, func, iterations) {
-  checkRam(label, logger);
-
+function runBench(logger, algo, impl, n, iterations, func) {
   const before   = process.memoryUsage();
   const t0       = performance.now();
   const deadline = Date.now() + MAX_TIME_SEC * 1000;
+  const timestamp = new Date().toISOString();
 
   try {
     for (let i = 0; i < iterations; i++) {
       func();
 
-      if (i % 1000 === 0 && Date.now() > deadline) {
-        logger.write(`  ${label.padEnd(14)} TIMEOUT! (>${MAX_TIME_SEC}s) ✗`);
-        return;
-      }
-      if (i % 1000 === 0 && getRamMB() > MAX_RAM_MB) {
-        logger.write(`  ${label.padEnd(14)} RAM excedida! ✗`);
-        return;
+      // Checagens de segurança a cada 1000 iterações para não pesar no loop
+      if (i % 1000 === 0) {
+        if (Date.now() > deadline) throw new Error("TIMEOUT");
+        if (getRamMB() > MAX_RAM_MB) throw new Error("OOM (RAM Excedida)");
       }
     }
 
@@ -194,47 +138,20 @@ function runBench(logger, label, func, iterations) {
     const after     = process.memoryUsage();
     const ms        = t1 - t0;
     const heapDelta = (after.heapUsed - before.heapUsed) / 1024;
-    const ram       = getRamMB();
 
     logger.write(
-      `  ${label.padEnd(14)} Tempo: ${ms.toFixed(1).padStart(8)} ms  |` +
-      `  Heap Δ: ${heapDelta.toFixed(1).padStart(10)} KB  |` +
-      `  RAM: ${ram.toFixed(0)}MB`
+      `"${timestamp}","${algo}","${impl}",${n},${iterations},${ms.toFixed(1)},${heapDelta.toFixed(1)}`
     );
   } catch (e) {
+    let errorMsg = e.message;
     if (e instanceof RangeError) {
-      logger.write(`  ${label.padEnd(14)} STACK OVERFLOW! ✗`);
-    } else {
-      logger.write(`  ${label.padEnd(14)} ERRO: ${e.message} ✗`);
+      errorMsg = "STACK OVERFLOW";
     }
-  }
-}
-
-function overflowTest(logger, label, func, resultFn) {
-  process.stdout.write(`  ${label} ... `);
-  logger.stream.write(`  ${label} ... `);
-  checkRam(label, logger);
-
-  const deadline        = Date.now() + MAX_TIME_SEC * 1000;
-  const monitorInterval = setInterval(() => {
-    if (Date.now() > deadline || getRamMB() > MAX_RAM_MB) {
-      clearInterval(monitorInterval);
-      logger.write("TIMEOUT ou RAM excedida! ✗");
-      process.exit(1);
-    }
-  }, 200);
-
-  try {
-    const result = func();
-    clearInterval(monitorInterval);
-    logger.write(`OK! (${resultFn(result)})`);
-  } catch (e) {
-    clearInterval(monitorInterval);
-    if (e instanceof RangeError) {
-      logger.write("STACK OVERFLOW! ✗  (RangeError: Maximum call stack size exceeded)");
-    } else {
-      logger.write(`ERRO: ${e.message} ✗`);
-    }
+    
+    // Em caso de erro, escreve a mensagem na coluna de Tempo e deixa a Memória vazia
+    logger.write(
+      `"${timestamp}","${algo}","${impl}",${n},${iterations},"${errorMsg}",""`
+    );
   }
 }
 
@@ -244,43 +161,32 @@ function overflowTest(logger, label, func, resultFn) {
 const logger = new BenchLogger();
 logger.start();
 
-logger.write(`NOTA: Node.js V8 não garante TCO — mesmo código em tail position
-  empilha frames e estoura com n~15.000. Loop é o equivalente real.
-  Normal    = recursão pura (estoura cedo)
-  Loop/Tail = while/for equivalente ao tail call das outras linguagens\n`);
-
 // ----------------------------------------------------------
 // TESTE 1 — Algorithm 1: Factorial with accumulator
 // ----------------------------------------------------------
-logger.section("TESTE 1: Algorithm 1 — Factorial (self-tail)");
+// n=10, 500.000 iterações (sem bignum)
+runBench(logger, "Factorial", "Normal", 10, 500_000, () => factorialNormal(10n));
+runBench(logger, "Factorial", "Loop/Tail", 10, 500_000, () => factorialTail(10n));
 
-logger.write("  n=10, 500.000 iterações (sem bignum)");
-runBench(logger, "Normal      ", () => factorialNormal(10n), 500_000);
-runBench(logger, "Loop/Tail   ", () => factorialTail(10n),   500_000);
-
-logger.write("");
-logger.write("  n=1000, 10.000 iterações (com bignum)");
-runBench(logger, "Normal      ", () => factorialNormal(1000n), 10_000);
-runBench(logger, "Loop/Tail   ", () => factorialTail(1000n),   10_000);
+// n=1000, 10.000 iterações (com bignum)
+// Passamos o N como string/número na assinatura para o CSV, mas o BigInt vai na closure
+runBench(logger, "Factorial", "Normal", 1000, 10_000, () => factorialNormal(1000n));
+runBench(logger, "Factorial", "Loop/Tail", 1000, 10_000, () => factorialTail(1000n));
 
 // ----------------------------------------------------------
 // TESTE 2 — Algorithm 2: Mutually recursive even/odd
 // ----------------------------------------------------------
-logger.section("TESTE 2: Algorithm 2 — Mutually recursive even/odd");
+// n=1000, 500.000 iterações
+runBench(logger, "Mutually Rec (Even)", "Normal", 1000, 500_000, () => evenNormal(1_000));
+runBench(logger, "Mutually Rec (Even)", "Loop", 1000, 500_000, () => isEvenLoop(1_000));
 
-logger.write("  n=1000, 500.000 iterações");
-runBench(logger, "Normal even ", () => evenNormal(1_000), 500_000);
-runBench(logger, "Loop   even ", () => isEvenLoop(1_000), 500_000);
-runBench(logger, "Normal odd  ", () => oddNormal(1_000),  500_000);
+runBench(logger, "Mutually Rec (Odd)", "Normal", 1000, 500_000, () => oddNormal(1_000));
 
 // ----------------------------------------------------------
 // TESTE 3 — Algorithm 3: Three-state machine A→B→C→A
 // ----------------------------------------------------------
-logger.section("TESTE 3: Algorithm 3 — Three-state machine (A→B→C→A)");
-
-logger.write("  k=999 (múltiplo de 3), 500.000 iterações");
-runBench(logger, "Normal A→B→C", () => stateANormal(999), 500_000);
-runBench(logger, "Loop   A→B→C", () => stateALoop(999),   500_000);
-
+// k=999 (múltiplo de 3), 500.000 iterações
+runBench(logger, "State Machine", "Normal", 999, 500_000, () => stateANormal(999));
+runBench(logger, "State Machine", "Loop", 999, 500_000, () => stateALoop(999));
 
 logger.close();

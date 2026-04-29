@@ -1,0 +1,11 @@
+Data,Algoritmo,Implementacao,N,Iteracoes,Tempo_ms,Memoria_KB
+"Monday, April 27th, 2026 8:06:25pm","Factorial","Normal",10,500000,12,50.9
+"Monday, April 27th, 2026 8:06:25pm","Factorial","Tail (acc)",10,500000,8.4,44.9
+"Monday, April 27th, 2026 8:06:28pm","Factorial","Normal",1000,10000,2253.7,5078780.5
+"Monday, April 27th, 2026 8:06:30pm","Factorial","Tail (acc)",1000,10000,1985.9,5817015.8
+"Monday, April 27th, 2026 8:06:30pm","Mutually Rec (Even)","Normal",1000,500000,372.4,2231.6
+"Monday, April 27th, 2026 8:06:31pm","Mutually Rec (Even)","Tail",1000,500000,372.9,2167.6
+"Monday, April 27th, 2026 8:06:31pm","Mutually Rec (Odd)","Normal",1000,500000,373,2227.5
+"Monday, April 27th, 2026 8:06:32pm","Mutually Rec (Odd)","Tail",1000,500000,377,2163.5
+"Monday, April 27th, 2026 8:06:32pm","State Machine","Normal",999,500000,370.6,1489.1
+"Monday, April 27th, 2026 8:06:32pm","State Machine","Tail",999,500000,423.8,1489.1
