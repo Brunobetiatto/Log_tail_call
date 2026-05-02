@@ -1,0 +1,11 @@
+Data,Algoritmo,Implementacao,N,Iteracoes,Tempo_ms,Memoria_KB
+"2026-05-02 14:54:52","Factorial","Normal",10,500000,7.3,1.3
+"2026-05-02 14:54:52","Factorial","Tail (acc)",10,500000,7.2,1.3
+"2026-05-02 14:54:52","Factorial","Normal",1000,10000,65.0,1.3
+"2026-05-02 14:54:52","Factorial","Tail (acc)",1000,10000,14.2,1.3
+"2026-05-02 14:54:52","Mutually Rec (Even)","Normal",1000,500000,150.3,1.3
+"2026-05-02 14:54:53","Mutually Rec (Even)","Tail",1000,500000,149.2,1.3
+"2026-05-02 14:54:53","Mutually Rec (Odd)","Normal",1000,500000,154.0,1.3
+"2026-05-02 14:54:53","Mutually Rec (Odd)","Tail",1000,500000,150.4,1.3
+"2026-05-02 14:54:53","State Machine","Normal",999,500000,157.2,1.3
+"2026-05-02 14:54:53","State Machine","Tail",999,500000,158.9,1.3
