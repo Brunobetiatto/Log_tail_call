@@ -1,7 +1,3 @@
-% ============================================================
-%  ESTADO DA ARTE — Tail Call Optimization
-%  Compile com: pdfLaTeX + Biber
-% ============================================================
 
 \documentclass[12pt, a4paper]{article}
 
@@ -18,7 +14,6 @@
 \usepackage{booktabs}
 \usepackage{tabularx}
 \usepackage{float}
-% \usepackage{natbib} % Comentado para evitar conflito com biblatex
 
 \usepackage[backend=biber, style=abnt]{biblatex}
 \addbibresource{main.bib}
@@ -46,7 +41,7 @@
   {\LARGE\bfseries Estado da Arte} \\[0.4em]
   {\large\itshape How do different programming languages solve\\
   the tail call optimization problem?} \\[1em]
-  {\normalsize Seu Nome} \\
+  {\normalsize Bruno Betiatto Alves} \\
   {\small Pontifícia Universidade Católica do Paraná} \\
   {\small \today}
 \end{center}
@@ -59,37 +54,30 @@
 \section{Introdução}
 % ============================================================
 
-A otimização de chamadas em cauda (\textit{Tail Call Optimization} — TCO)
-é uma técnica compilacional que permite reutilizar o quadro de pilha
-(\textit{stack frame}) da função chamadora quando a chamada a uma subrotina
-é a última ação executada por essa função \autocite{SUBSTITUIR_steele1977}.
-Sem essa otimização, funções recursivas em cauda consomem espaço de pilha
-proporcional ao número de chamadas — complexidade $O(n)$ —, podendo
-ocasionar estouro de pilha (\textit{stack overflow}) em entradas de grande porte.
-Com TCO, o consumo é reduzido para $O(1)$ \autocite{SUBSTITUIR_wikipedia_tco}.
+A otimização de chamadas em cauda (\textit{Tail Call Optimization} — TCO) é uma técnica compilacional que permite reutilizar o quadro de pilha (\textit{stack frame}) da função chamadora quando a chamada a uma subrotina é a última ação executada por essa função \autocite{steele1977}. Mais do que uma simples melhoria de performance, a TCO é fundamental para a definição de linguagens que utilizam a recursão como mecanismo primário de iteração, garantindo que o consumo de memória não cresça linearmente com o número de chamadas.
 
-A recursão em cauda transcende a mera economia de espaço, estabelecendo o alicerce
-para representações avançadas de compiladores, como o Estilo de Passagem de Continuação
-(Continuation-Passing Style - CPS). Além disso, este levantamento aborda como transformações
-de fluxo transferem a responsabilidade do hardware para o Coletor de Lixo (GC) e avalia o
-impacto destas técnicas sob a ótica de microbenchmarking e sustentabilidade energética (GreenScore).
+A literatura moderna expande este conceito, diferenciando a TCO como uma técnica de implementação da \textit{Proper Tail Recursion} (PTR), uma garantia semântica de eficiência de espaço assintótica necessária para suportar padrões como o \textit{Continuation-Passing Style} (CPS) de forma portável \autocite{clinger1998}. Além disso, a eficácia da TCO está intrinsecamente ligada à forma como os compiladores gerenciam a passagem de parâmetros e o retorno de valores entre registradores e memória \autocite{bigot1999}.
+
+\section{Interconexão de Paradigmas de Execução} 
+O desenvolvimento e a otimização de linguagens de programação contemporâneas exigem um equilíbrio intrincado entre a expressividade sintática requerida pelos desenvolvedores e a eficiência mecânica na execução em nível de hardware. A literatura de pesquisa em ciência da computação tem focado substancialmente em técnicas que mitigam as penalidades de desempenho associadas a abstrações de alto nível. 
+
+A recursão, embora ofereça uma modelagem matemática elegante e indutiva para problemas complexos de software, tradicionalmente impõe severas restrições arquitetônicas. A arquitetura de von Neumann depende intrinsecamente de uma pilha de chamadas (call stack) para gerenciar sub-rotinas. O aprofundamento irrestrito dessa pilha leva ao esgotamento da memória e à terminação do programa \autocite{insa2015}  Para contornar essas limitações, estratégias de Otimização de Chamada em Cauda (Tail Call Optimization - TCO) e a formalização semântica da Recursão em Cauda Própria (Proper Tail Recursion - PTR) foram desenvolvidas, permitindo que algoritmos recursivos operem em espaço de memória constante, convertendo efetivamente iterações lógicas em execuções mecânicas iterativas \autocite{malkov2026}.   A adoção da recursão em cauda transcende a mera economia de espaço em pilha; ela estabelece o alicerce fundamental para técnicas avançadas de representação de compiladores, como o Estilo de Passagem de Continuação (Continuation-Passing Style - CPS). O CPS reifica o fluxo de controle, transformando-o de um mecanismo implícito da máquina em variáveis e funções de primeira ou segunda classe manipuláveis pelo programa \autocite{clinger1998}.
 
 % ============================================================
 \section{Tail Call Optimization: Fundamentos e Semântica}
 % ============================================================
 
-Uma \textit{tail call} ocorre quando a chamada a uma função é a última
-operação de outra função, sem nenhum cálculo posterior sobre o resultado
-retornado \autocite{SUBSTITUIR_steele1977}. A literatura distingue a TCO
-(uma otimização oportunista) da \textit{Proper Tail Recursion} (PTR), que é uma
-garantia semântica de espaço assintótico constante \autocite{biernacka2005}.
+Uma \textit{tail call} ocorre quando a chamada a uma função é a última operação de outra função. Contudo, \autocite{clinger1998} argumenta que a definição de TCO não deve ser vista apenas como uma otimização "ad hoc" de linguagens baseadas em pilha, mas sim como uma propriedade de preservação de espaço. Para o autor, a \textit{Proper Tail Recursion} garante que um programa recursivo em cauda execute em espaço constante, o que é crucial em linguagens como Scheme, onde a distinção entre iteração e recursão é puramente sintática.
 
-Duas técnicas principais são empregadas na implementação e mitigação de TCO:
+\subsection{O Problema do Posicionamento de Valores}
 
+Um desafio crítico na implementação da TCO é o posicionamento de valores de retorno. Segundo \autocite{bigot1999}, linguagens funcionais tendem a retornar valores em registradores, enquanto linguagens lógicas (como Prolog) frequentemente o fazem via memória. Políticas fixas de posicionamento podem gerar \textit{overheads} desnecessários:
 \begin{itemize}
-  \item \textbf{Substituição direta e CPS:} O compilador detecta a chamada em cauda e emite um salto (\textit{jump}). No paradigma de \textit{Continuation-Passing Style} (CPS), o controle de fluxo não retorna implicitamente; uma função de "continuação" é passada como parâmetro, convertendo o espaço de pilha efêmero em estruturas estritamente controladas \autocite{danvy2023}.
-  \item \textbf{Trampolim (\textit{trampolining}):} Utilizado para evadir limites estáticos de recursão em interpretadores. A função encapsula seu estado em uma função anônima (\textit{thunk}) e retorna para um laço controlador mestre. Para evitar explosão alocativa na memória, utiliza-se a defuncionalização para converter continuações em objetos algébricos estáticos \autocite{verhoeff2025}.
+    \item \textbf{Em Registradores:} Pode impedir que certas computações intuitivamente iterativas sejam implementadas de forma verdadeiramente iterativa devido à necessidade de movimentação de dados.
+    \item \textbf{Em Memória:} Incorre em penalidades de performance devido ao aumento de referências à memória \autocite{bigot1999}.
 \end{itemize}
+
+O trabalho de Bigot e Debray propõe modelos de custo para decidir dinamicamente se o retorno deve ocorrer em registradores ou memória, otimizando a transição de controle sem sacrificar a integridade da chamada em cauda.
 
 % ============================================================
 \section{TCO em Diferentes Linguagens de Programação}
@@ -100,49 +88,25 @@ A adoção de TCO reflete prioridades distintas de design arquitetural, indo des
 % ── Tabela comparativa ────────────────────────────────────────
 \begin{table}[H]
   \centering
-  \caption{Suporte a TCO nas principais linguagens de programação}
+  \caption{Suporte a TCO e PTR nas principais linguagens de programação}
   \label{tab:tco_linguagens}
   \begin{tabularx}{\textwidth}{llX}
     \toprule
     \textbf{Linguagem} & \textbf{Suporte a TCO} & \textbf{Observação} \\
     \midrule
-    Scheme   & Obrigatório & Parte do padrão R$^n$RS; garantia assintótica PTR \\
-    Haskell  & Nativo      & Avaliação preguiçosa e continuações explícitas (join points) \\
-    Erlang   & Nativo      & Essencial para processos servidores indefinidos \\
-    JavaScript & Parcial   & Suporte inconsistente; frequentemente convertido via trampolim \autocite{SUBSTITUIR_park2024} \\
-    C / C++ & Via compilador & GCC/Clang otimizam; abordado via bibliotecas de pilha estendida para recursão abissal \autocite{malkov2026} \\
-    Go       & Não nativo  & Foco em iteração e eficiência de ponteiros \autocite{lion2022} \\
-    Java     & Não suportado & Mitigado via conversão JIT de laços para métodos recursivos \autocite{insa2015} \\
+    Scheme   & Obrigatório & Exige \textit{Proper Tail Recursion} conforme o padrão IEEE/ANSI \autocite{clinger1998}. \\
+    Haskell  & Nativo      & Utiliza \textit{join points} e avaliação preguiçosa; otimiza retorno via registradores. \\
+    Erlang   & Nativo      & Crucial para processos de longa duração que operam em laços recursivos infinitos. \\
+    Prolog   & Nativo (WARM) & Frequentemente utiliza retorno via memória, exigindo otimizações específicas \autocite{bigot1999}. \\
+    C / C++ & Opcional     & Realizado pelo compilador (GCC/Clang) em níveis altos de otimização (-O2/O3). \\
+    Java     & Limitado     & Mitigado via transformações JIT; suporte nativo na JVM ainda é uma proposta (Project Loom). \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-\subsection{C/C++ e Bibliotecas de Pilha Estendida}
-Em linguagens de foco em acesso nativo como C++, a ausência de TCO em recursões complexas resulta em falhas de segmentação. Trabalhos de fronteira contornam isso através de Bibliotecas de Pilha Estendida (ESL), replicando blocos transientes vitais sob demanda com sobrecarga zero, sem alterar a sintaxe abstrata do compilador principal \autocite{malkov2026}.
+\subsection{Eficiência de Espaço e Coleta de Lixo}
 
-\subsection{Linguagens Gerenciadas e Transformação JIT}
-Linguagens como Java operam sob a JVM sem suporte nativo absoluto a TCO. Para contornar isso, algoritmos industriais transformam rotinas iterativas em lógicas recursivas; surprendentemente, o motor \textit{Just-In-Time} (JIT) reconhece esses padrões, executando inlining destrutivo que alcança desempenhos que rivalizam com as funções imperativas originais \autocite{insa2015}.
-
-% ============================================================
-\section{Impactos Transacionais, Memória e GreenScore}
-% ============================================================
-
-A transformação de fluxos de controle não atua apenas sobre a velocidade (CPU), mas altera radicalmente a topologia da memória, impondo novos desafios métricos e ambientais.
-
-\subsection{O Custo Punitivo da Coleta de Lixo (GC)}
-Quando estruturas baseadas em pilha são substituídas por alocações no heap (via Trampolining ou CPS), o hardware transfere a gestão para o Coletor de Lixo. Modelagens mostram que sistemas altamente oscilatórios (como o algoritmo \textit{Towers of Hanoi}) sofrem extrema degradação. Em arquiteturas massivas distribuídas, como Apache Spark, a criação cíclica efêmera força esvaziamentos na JVM que podem representar até 47\% do tempo decorrido do processador isoladamente em cargas intensas de K-Nearest Neighbors.
-
-\subsection{Compilação JIT vs AOT e a Métrica GreenScore}
-A eficiência transcende os ciclos de clock e entra no âmbito da sustentabilidade. A literatura avalia as penalidades energéticas utilizando o índice GreenScore, modelado formalmente pela equação:
-
-\begin{equation}
-\mathrm{GreenScore} = \alpha \times \left(\mathrm{Energia}_{\mathrm{norm}}\right) + \beta \times \left(\mathrm{Carbono}_{\mathrm{norm}}\right) + \gamma \times \left(\mathrm{Tempo}_{\mathrm{norm}}\right)
-\end{equation}
-
-Análises exaustivas demonstram que em ambientes JIT (como PyPy), a performance lógica é frequentemente ofuscada pelo alto consumo de energia no aquecimento (\textit{start-up}). Em contrapartida, integrações com compilação Estática \textit{Ahead-Of-Time} (AOT) usando \texttt{ctypes} consolidam superioridade nas métricas ambientais, gastando frações irrisórias de energia e resíduos de carbono comparativamente \autocite{turja2025}.
-
-\subsection{Microbenchmarking em Máquinas Virtuais Limitadas}
-Avaliar otimizações recursivas minúsculas impõe desafios devido à variação temporal da nuvem (\textit{noisy neighbor}). Avaliadores superam essas barreiras utilizando filtragens matemáticas pelo método Wilcoxon Rank-Sum ou infraestruturas \textit{Function-as-a-Service} (FaaS). Adicionalmente, para contêineres e arquiteturas da borda (\textit{edge}), destacam-se ferramentas enxutas como o QUICK MB, que com apenas 25 MB isola as falhas puras de memória, I/O e processamento contínuo sem demandar matrizes artificiais pesadas \autocite{garg2023}.
+Como destacado por \autocite{clinger1998}, a \textit{Proper Tail Recursion} está intimamente ligada ao Coletor de Lixo (\textit{Garbage Collector}). A liberação de recursos de variáveis que não estão mais no escopo antes da chamada em cauda é essencial para manter a complexidade de espaço assintótica. Sem essa sincronia entre o gerenciador de memória e o compilador, mesmo uma chamada em cauda tecnicamente otimizada poderia resultar em vazamentos de memória (\textit{space leaks}) em linguagens funcionais preguiçosas.
 
 \newpage
 \printbibliography[title={Referências}]
