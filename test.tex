@@ -1,0 +1,150 @@
+% ============================================================
+%  ESTADO DA ARTE — Tail Call Optimization
+%  Compile com: pdfLaTeX + Biber
+% ============================================================
+
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage[top=3cm, bottom=2cm, left=3cm, right=2cm]{geometry}
+\usepackage{setspace}
+\usepackage{parskip}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{float}
+% \usepackage{natbib} % Comentado para evitar conflito com biblatex
+
+\usepackage[backend=biber, style=abnt]{biblatex}
+\addbibresource{main.bib}
+
+\onehalfspacing
+
+\definecolor{azul}{RGB}{0, 70, 127}
+
+\hypersetup{colorlinks=true, linkcolor=azul, citecolor=azul, urlcolor=azul}
+
+\titleformat{\section}{\large\bfseries\color{azul}}{\thesection}{1em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{1em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textit{Estado da Arte}}
+\fancyhead[R]{\small\textit{Tail Call Optimization em Linguagens de Programação}}
+\fancyfoot[C]{\thepage}
+
+% ============================================================
+\begin{document}
+
+% ── Cabeçalho ────────────────────────────────────────────────
+\begin{center}
+  {\LARGE\bfseries Estado da Arte} \\[0.4em]
+  {\large\itshape How do different programming languages solve\\
+  the tail call optimization problem?} \\[1em]
+  {\normalsize Seu Nome} \\
+  {\small Pontifícia Universidade Católica do Paraná} \\
+  {\small \today}
+\end{center}
+
+\vspace{1em}
+\hrule
+\vspace{1.5em}
+
+% ============================================================
+\section{Introdução}
+% ============================================================
+
+A otimização de chamadas em cauda (\textit{Tail Call Optimization} — TCO)
+é uma técnica compilacional que permite reutilizar o quadro de pilha
+(\textit{stack frame}) da função chamadora quando a chamada a uma subrotina
+é a última ação executada por essa função \autocite{SUBSTITUIR_steele1977}.
+Sem essa otimização, funções recursivas em cauda consomem espaço de pilha
+proporcional ao número de chamadas — complexidade $O(n)$ —, podendo
+ocasionar estouro de pilha (\textit{stack overflow}) em entradas de grande porte.
+Com TCO, o consumo é reduzido para $O(1)$ \autocite{SUBSTITUIR_wikipedia_tco}.
+
+A recursão em cauda transcende a mera economia de espaço, estabelecendo o alicerce
+para representações avançadas de compiladores, como o Estilo de Passagem de Continuação
+(Continuation-Passing Style - CPS). Além disso, este levantamento aborda como transformações
+de fluxo transferem a responsabilidade do hardware para o Coletor de Lixo (GC) e avalia o
+impacto destas técnicas sob a ótica de microbenchmarking e sustentabilidade energética (GreenScore).
+
+% ============================================================
+\section{Tail Call Optimization: Fundamentos e Semântica}
+% ============================================================
+
+Uma \textit{tail call} ocorre quando a chamada a uma função é a última
+operação de outra função, sem nenhum cálculo posterior sobre o resultado
+retornado \autocite{SUBSTITUIR_steele1977}. A literatura distingue a TCO
+(uma otimização oportunista) da \textit{Proper Tail Recursion} (PTR), que é uma
+garantia semântica de espaço assintótico constante \autocite{biernacka2005}.
+
+Duas técnicas principais são empregadas na implementação e mitigação de TCO:
+
+\begin{itemize}
+  \item \textbf{Substituição direta e CPS:} O compilador detecta a chamada em cauda e emite um salto (\textit{jump}). No paradigma de \textit{Continuation-Passing Style} (CPS), o controle de fluxo não retorna implicitamente; uma função de "continuação" é passada como parâmetro, convertendo o espaço de pilha efêmero em estruturas estritamente controladas \autocite{danvy2023}.
+  \item \textbf{Trampolim (\textit{trampolining}):} Utilizado para evadir limites estáticos de recursão em interpretadores. A função encapsula seu estado em uma função anônima (\textit{thunk}) e retorna para um laço controlador mestre. Para evitar explosão alocativa na memória, utiliza-se a defuncionalização para converter continuações em objetos algébricos estáticos \autocite{verhoeff2025}.
+\end{itemize}
+
+% ============================================================
+\section{TCO em Diferentes Linguagens de Programação}
+% ============================================================
+
+A adoção de TCO reflete prioridades distintas de design arquitetural, indo desde a garantia semântica até transformações robustas em tempo de execução.
+
+% ── Tabela comparativa ────────────────────────────────────────
+\begin{table}[H]
+  \centering
+  \caption{Suporte a TCO nas principais linguagens de programação}
+  \label{tab:tco_linguagens}
+  \begin{tabularx}{\textwidth}{llX}
+    \toprule
+    \textbf{Linguagem} & \textbf{Suporte a TCO} & \textbf{Observação} \\
+    \midrule
+    Scheme   & Obrigatório & Parte do padrão R$^n$RS; garantia assintótica PTR \\
+    Haskell  & Nativo      & Avaliação preguiçosa e continuações explícitas (join points) \\
+    Erlang   & Nativo      & Essencial para processos servidores indefinidos \\
+    JavaScript & Parcial   & Suporte inconsistente; frequentemente convertido via trampolim \autocite{SUBSTITUIR_park2024} \\
+    C / C++ & Via compilador & GCC/Clang otimizam; abordado via bibliotecas de pilha estendida para recursão abissal \autocite{malkov2026} \\
+    Go       & Não nativo  & Foco em iteração e eficiência de ponteiros \autocite{lion2022} \\
+    Java     & Não suportado & Mitigado via conversão JIT de laços para métodos recursivos \autocite{insa2015} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{C/C++ e Bibliotecas de Pilha Estendida}
+Em linguagens de foco em acesso nativo como C++, a ausência de TCO em recursões complexas resulta em falhas de segmentação. Trabalhos de fronteira contornam isso através de Bibliotecas de Pilha Estendida (ESL), replicando blocos transientes vitais sob demanda com sobrecarga zero, sem alterar a sintaxe abstrata do compilador principal \autocite{malkov2026}.
+
+\subsection{Linguagens Gerenciadas e Transformação JIT}
+Linguagens como Java operam sob a JVM sem suporte nativo absoluto a TCO. Para contornar isso, algoritmos industriais transformam rotinas iterativas em lógicas recursivas; surprendentemente, o motor \textit{Just-In-Time} (JIT) reconhece esses padrões, executando inlining destrutivo que alcança desempenhos que rivalizam com as funções imperativas originais \autocite{insa2015}.
+
+% ============================================================
+\section{Impactos Transacionais, Memória e GreenScore}
+% ============================================================
+
+A transformação de fluxos de controle não atua apenas sobre a velocidade (CPU), mas altera radicalmente a topologia da memória, impondo novos desafios métricos e ambientais.
+
+\subsection{O Custo Punitivo da Coleta de Lixo (GC)}
+Quando estruturas baseadas em pilha são substituídas por alocações no heap (via Trampolining ou CPS), o hardware transfere a gestão para o Coletor de Lixo. Modelagens mostram que sistemas altamente oscilatórios (como o algoritmo \textit{Towers of Hanoi}) sofrem extrema degradação. Em arquiteturas massivas distribuídas, como Apache Spark, a criação cíclica efêmera força esvaziamentos na JVM que podem representar até 47\% do tempo decorrido do processador isoladamente em cargas intensas de K-Nearest Neighbors.
+
+\subsection{Compilação JIT vs AOT e a Métrica GreenScore}
+A eficiência transcende os ciclos de clock e entra no âmbito da sustentabilidade. A literatura avalia as penalidades energéticas utilizando o índice GreenScore, modelado formalmente pela equação:
+
+\begin{equation}
+\mathrm{GreenScore} = \alpha \times \left(\mathrm{Energia}_{\mathrm{norm}}\right) + \beta \times \left(\mathrm{Carbono}_{\mathrm{norm}}\right) + \gamma \times \left(\mathrm{Tempo}_{\mathrm{norm}}\right)
+\end{equation}
+
+Análises exaustivas demonstram que em ambientes JIT (como PyPy), a performance lógica é frequentemente ofuscada pelo alto consumo de energia no aquecimento (\textit{start-up}). Em contrapartida, integrações com compilação Estática \textit{Ahead-Of-Time} (AOT) usando \texttt{ctypes} consolidam superioridade nas métricas ambientais, gastando frações irrisórias de energia e resíduos de carbono comparativamente \autocite{turja2025}.
+
+\subsection{Microbenchmarking em Máquinas Virtuais Limitadas}
+Avaliar otimizações recursivas minúsculas impõe desafios devido à variação temporal da nuvem (\textit{noisy neighbor}). Avaliadores superam essas barreiras utilizando filtragens matemáticas pelo método Wilcoxon Rank-Sum ou infraestruturas \textit{Function-as-a-Service} (FaaS). Adicionalmente, para contêineres e arquiteturas da borda (\textit{edge}), destacam-se ferramentas enxutas como o QUICK MB, que com apenas 25 MB isola as falhas puras de memória, I/O e processamento contínuo sem demandar matrizes artificiais pesadas \autocite{garg2023}.
+
+\newpage
+\printbibliography[title={Referências}]
+
+\end{document}
