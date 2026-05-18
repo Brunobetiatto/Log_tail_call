@@ -152,16 +152,19 @@ def run_bench(logger, algo, impl, n, iterations, func):
         try:
             gc.collect()
             tracemalloc.start()
-            t0 = time.perf_counter()
+            cpu_freq_ghz = psutil.cpu_freq().current / 1000.0  # MHz → GHz
+            t0 = time.process_time()
             for _ in range(iterations):
                 func()
                 if monitor.exceeded:
                     error_holder[0] = monitor.reason
                     return
-            t1 = time.perf_counter()
+            t1 = time.process_time()
             _, peak = tracemalloc.get_traced_memory()
             tracemalloc.stop()
-            result_holder[0] = ((t1 - t0) * 1000, peak / 1024.0)
+            cpu_seconds = t1 - t0
+            cycles = cpu_seconds * cpu_freq_ghz * 1e9  # ciclos totais
+            result_holder[0] = (cycles, peak / 1024.0)
         except RecursionError:
             error_holder[0] = "STACK OVERFLOW"
         except MemoryError:
