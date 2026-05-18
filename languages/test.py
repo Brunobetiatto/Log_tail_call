@@ -72,7 +72,7 @@ class BenchLogger:
 
     def start(self):
         # Escreve o cabeçalho das colunas do CSV
-        self.write("Data,Algoritmo,Implementacao,N,Iteracoes,Tempo_ms,Memoria_KB")
+        self.write("Data,Algoritmo,Implementacao,N,Iteracoes,Ciclos_CPU,Ciclos_por_iter,Memoria_KB")
 
     def close(self):
         self.file.close()
@@ -195,8 +195,9 @@ def run_bench(logger, algo, impl, n, iterations, func):
         return
 
     # Execução bem-sucedida
-    ms, mem_kb = result_holder[0]
-    logger.write(f'"{timestamp}","{algo}","{impl}",{n},{iterations},{ms:.1f},{mem_kb:.1f}')
+    cycles_total, mem_kb = result_holder[0]
+    cycles_per_iter = cycles_total / iterations
+    logger.write(f'"{timestamp}","{algo}","{impl}",{n},{iterations},{cycles_total:.0f},{cycles_per_iter:.2f},{mem_kb:.1f}')
 
 
 # ============================================================
