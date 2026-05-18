@@ -19,7 +19,7 @@ combined['Linguagem'] = combined['Linguagem'].replace({'NODE': 'Node.js'})
 combined['Tempo_ms'] = pd.to_numeric(combined['Tempo_ms'], errors='coerce')
 
 # Normalize: time per single iteration (µs)
-combined['us_per_iter'] = (combined['Tempo_ms'] / combined['Iteracoes']) * 1000
+combined['cycles_per_iter'] = pd.to_numeric(combined['Ciclos_por_iter'], errors='coerce')
 
 # Fix negative / obviously wrong memory values
 combined['Memoria_KB'] = combined['Memoria_KB'].clip(lower=0)
@@ -40,7 +40,7 @@ LANG_PALETTE = {
 # Best (min) time per algorithm × language
 best = (
     combined
-    .groupby(['Linguagem', 'Algoritmo'])['us_per_iter']
+    .groupby(['Linguagem', 'Algoritmo'])['cycles_per_iter']
     .min()
     .reset_index()
 )
@@ -55,16 +55,16 @@ mem = (
 )
 
 # Speedup relative to Python (best impl)
-python_ref = best[best['Linguagem'] == 'PYTHON'].set_index('Algoritmo')['us_per_iter']
+python_ref = best[best['Linguagem'] == 'PYTHON'].set_index('Algoritmo')['cycles_per_iter']
 speedup = best.copy()
 speedup['speedup'] = speedup.apply(
-    lambda r: python_ref.get(r['Algoritmo'], np.nan) / r['us_per_iter'], axis=1
+    lambda r: python_ref.get(r['Algoritmo'], np.nan) / r['cycles_per_iter'], axis=1
 )
 
 # Factorial scaling: N=10 vs N=1000, best impl per group
 fact = combined[combined['Algoritmo'] == 'Factorial'].copy()
 fact_agg = (
-    fact.groupby(['Linguagem', 'N'])['us_per_iter']
+    fact.groupby(['Linguagem', 'N'])['cycles_per_iter']
     .min()
     .reset_index()
 )
@@ -96,7 +96,7 @@ ax4 = fig.add_subplot(gs[1, 1])  # Memory usage
 # ─── Plot 1: Tempo normalizado por iteração ───────────────────────────────────
 pivoted = (
     best
-    .pivot(index='Algoritmo', columns='Linguagem', values='us_per_iter')
+    .pivot(index='Algoritmo', columns='Linguagem', values='cycles_per_iter')
     .reindex(ALGO_ORDER)
     [LANG_ORDER]
 )
@@ -121,8 +121,8 @@ for i, lang in enumerate(LANG_ORDER):
 
 ax1.set_xticks(x)
 ax1.set_xticklabels(ALGO_LABELS, fontsize=11)
-ax1.set_ylabel('Tempo por iteração (µs)', fontsize=11)
-ax1.set_title('Tempo Normalizado por Iteração\n(melhor implementação por linguagem)', fontsize=12, fontweight='bold')
+ax1.set_ylabel('Ciclos de CPU por iteração', fontsize=11)
+ax1.set_title('Ciclos de CPU por Iteração\n(melhor implementação por linguagem)', fontsize=12, fontweight='bold')
 ax1.legend(title='Linguagem', bbox_to_anchor=(1.01, 1), loc='upper left', fontsize=9, title_fontsize=9)
 ax1.set_ylim(bottom=0)
 ax1.yaxis.set_tick_params(labelsize=10)
@@ -154,7 +154,7 @@ sns.heatmap(
     mask=mask,
     center=1,
     vmin=0,
-    cbar_kws={'label': 'Speedup vs Python', 'shrink': 0.8},
+    cbar_kws={'label': 'Speedup vs Python (ciclos)', 'shrink': 0.8},
     annot_kws={'size': 11, 'weight': 'bold'},
 )
 ax2.set_xticklabels(ax2.get_xticklabels(), rotation=35, ha='right', fontsize=10)
@@ -173,7 +173,7 @@ for (row, col), val in np.ndenumerate(mask.values):
                  fontsize=8, color='#555', fontweight='bold')
 
 # ─── Plot 3: Fatorial — escala N=10 vs N=1000 ────────────────────────────────
-fact_pivot = fact_agg.pivot(index='Linguagem', columns='N_label', values='us_per_iter').reindex(LANG_ORDER)
+fact_pivot = fact_agg.pivot(index='Linguagem', columns='N_label', values='cycles_per_iter').reindex(LANG_ORDER)
 n_vals = ['N = 10', 'N = 1 000']
 width2 = 0.3
 x3 = np.arange(len(LANG_ORDER))
@@ -195,7 +195,7 @@ for j, (n_label, hatch) in enumerate(zip(n_vals, ['', '///'])):
 
 ax3.set_xticks(x3)
 ax3.set_xticklabels(LANG_ORDER, fontsize=10)
-ax3.set_ylabel('Tempo por iteração (µs)', fontsize=11)
+ax3.set_ylabel('Ciclos de CPU por iteração (escala log)', fontsize=11)
 ax3.set_title('Fatorial: Escala com Tamanho N\n(melhor implementação)', fontsize=12, fontweight='bold')
 
 patch_n10  = mpatches.Patch(facecolor='gray', alpha=1.0,               label='N = 10')
