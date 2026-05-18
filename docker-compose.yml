@@ -1,0 +1,9 @@
+version: '3.8'
+services:
+  benchmark-env:
+    build: .
+    volumes:
+      # Sincroniza a SUA pasta atual inteira com a pasta /app do Docker.
+      # Assim, os CSVs soltos e as imagens geradas na "analysis univariate plot" 
+      # vão aparecer magicamente no seu computador.
+      - ./:/app
