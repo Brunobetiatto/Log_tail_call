@@ -1,11 +1,66 @@
 # bench.exs
 # Rodar com: elixir bench.exs
 
+# ============================================================
+# CPU FREQUENCY READER
+# ============================================================
+defmodule CpuFreq do
+  @doc """
+  Retorna a frequência da CPU em GHz.
+  Lê de /proc/cpuinfo no Linux ou via sysctl no macOS.
+  """
+  def get_ghz do
+    case read_linux() do
+      nil -> read_macos()
+      ghz -> ghz
+    end
+  end
+
+  defp read_linux do
+    case File.read("/proc/cpuinfo") do
+      {:ok, content} ->
+        content
+        |> String.split("\n")
+        |> Enum.find_value(fn line ->
+          if String.starts_with?(line, "cpu MHz") do
+            line
+            |> String.split(":")
+            |> List.last()
+            |> String.trim()
+            |> Float.parse()
+            |> case do
+              {mhz, _} -> mhz / 1000.0
+              :error    -> nil
+            end
+          end
+        end)
+      _ ->
+        nil
+    end
+  end
+
+  defp read_macos do
+    case System.cmd("sysctl", ["-n", "hw.cpufrequency"], stderr_to_stdout: true) do
+      {output, 0} ->
+        output
+        |> String.trim()
+        |> Integer.parse()
+        |> case do
+          {hz, _} -> hz / 1.0e9
+          :error   -> 2.5   # fallback razoável se falhar tudo
+        end
+      _ ->
+        2.5
+    end
+  end
+end
+
+# ============================================================
+# LOGGER (Formato CSV — mesmo schema do Python)
+# ============================================================
 defmodule BenchLogger do
   def start do
     {:ok, file} = File.open("bench_results_elixir.csv", [:write, :utf8])
-
-    # Escreve o cabeçalho das colunas do CSV
     write(file, "Data,Algoritmo,Implementacao,N,Iteracoes,Ciclos_CPU,Ciclos_por_iter,Memoria_KB")
     file
   end
@@ -74,81 +129,83 @@ defmodule StateMachine do
 end
 
 # ============================================================
-# Benchmark Engine
+# BENCHMARK ENGINE
 # ============================================================
 defmodule Bench do
-  defp cpu_freq_ghz do
-    output = :os.cmd('grep -m1 "cpu MHz" /proc/cpuinfo') |> to_string()
-    case Regex.run(~r/:\s*([\d.]+)/, output) do
-      [_, freq] -> String.to_float(freq) / 1000.0
-      _ -> 2.0
-    end
-  end
-
-  def run(file, algo, impl, n, iterations, func) do
+  @doc """
+  Mede ciclos de CPU usando :erlang.statistics(:runtime), que retorna
+  tempo de CPU do processo em ms — equivalente ao time.process_time() do Python.
+  Ciclos = cpu_ms / 1000 * freq_ghz * 1e9
+  """
+  def run(file, algo, impl, n, iterations, freq_ghz, func) do
     :erlang.garbage_collect()
 
-    {_, words_before, _} = :erlang.statistics(:garbage_collection)
-    heap_before = :erlang.process_info(self(), :total_heap_size) |> elem(1)
-    mem_before  = (heap_before + words_before) * :erlang.system_info(:wordsize)
+    # Memória antes (heap do processo em bytes)
+    heap_before = heap_bytes()
 
+    # Reseta o diff de CPU time — próxima chamada retornará o delta
     :erlang.statistics(:runtime)
+
     Enum.each(1..iterations, fn _ -> func.() end)
-    {_, delta_ms} = :erlang.statistics(:runtime)
 
-    {_, words_after, _} = :erlang.statistics(:garbage_collection)
-    heap_after = :erlang.process_info(self(), :total_heap_size) |> elem(1)
-    mem_after  = (heap_after + words_after) * :erlang.system_info(:wordsize)
+    # {Total_ms, Diff_ms_since_last_call}
+    {_, cpu_diff_ms} = :erlang.statistics(:runtime)
 
-    freq_ghz       = cpu_freq_ghz()
-    cycles         = delta_ms / 1000.0 * freq_ghz * 1.0e9
-    cycles_per_iter = cycles / iterations
-    mem = (mem_after - mem_before) / 1024.0
+    heap_after = heap_bytes()
+
+    # Conversão: ms de CPU → ciclos (mesma fórmula do Python)
+    cpu_seconds  = cpu_diff_ms / 1000.0
+    cycles_total = cpu_seconds * freq_ghz * 1.0e9
+    cycles_per_iter = if iterations > 0, do: cycles_total / iterations, else: 0.0
+
+    mem_kb = max((heap_after - heap_before) / 1024.0, 0.0)
 
     timestamp = DateTime.utc_now() |> DateTime.to_string()
 
-    # Formata a string preservando as aspas no texto para proteger o CSV
-    # ~.0f não é suportado no Erlang/OTP 24 (stdlib 3.17); usamos round/1 + ~w
-    line = :io_lib.format("\"~ts\",\"~ts\",\"~ts\",~w,~w,~w,~.2f,~.1f",
-                          [timestamp, algo, impl, n, iterations, round(cycles), cycles_per_iter, mem])
-           |> IO.chardata_to_string()
+    line =
+      :io_lib.format(
+        "\"~ts\",\"~ts\",\"~ts\",~w,~w,~.0f,~.2f,~.1f",
+        [timestamp, algo, impl, n, iterations, cycles_total, cycles_per_iter, mem_kb]
+      )
+      |> IO.chardata_to_string()
 
     BenchLogger.write(file, line)
+  end
+
+  defp heap_bytes do
+    {_, words} = :erlang.process_info(self(), :total_heap_size)
+    words * :erlang.system_info(:wordsize)
   end
 end
 
 # ============================================================
-# Inicia log e Testes
+# MAIN
 # ============================================================
+freq_ghz = CpuFreq.get_ghz()
+IO.puts("Frequência da CPU detectada: #{:erlang.float_to_binary(freq_ghz, decimals: 3)} GHz\n")
+
 file = BenchLogger.start()
 
 # ----------------------------------------------------------
-# TESTE 1 — Algorithm 1: Factorial with accumulator
+# TESTE 1 — Factorial
 # ----------------------------------------------------------
-# n=10, 500.000 iterações (sem bignum)
-Bench.run(file, "Factorial", "Normal", 10, 500_000, fn -> Factorial.normal(10) end)
-Bench.run(file, "Factorial", "Tail (acc)", 10, 500_000, fn -> Factorial.tail(10) end)
-
-# n=1000, 10.000 iterações (com bignum)
-Bench.run(file, "Factorial", "Normal", 1_000, 10_000, fn -> Factorial.normal(1_000) end)
-Bench.run(file, "Factorial", "Tail (acc)", 1_000, 10_000, fn -> Factorial.tail(1_000) end)
+Bench.run(file, "Factorial", "Normal",     10,    500_000, freq_ghz, fn -> Factorial.normal(10) end)
+Bench.run(file, "Factorial", "Tail (acc)", 10,    500_000, freq_ghz, fn -> Factorial.tail(10) end)
+Bench.run(file, "Factorial", "Normal",     1_000,  10_000, freq_ghz, fn -> Factorial.normal(1_000) end)
+Bench.run(file, "Factorial", "Tail (acc)", 1_000,  10_000, freq_ghz, fn -> Factorial.tail(1_000) end)
 
 # ----------------------------------------------------------
-# TESTE 2 — Algorithm 2: Mutually recursive even/odd
+# TESTE 2 — Mutually recursive even/odd
 # ----------------------------------------------------------
-# n=1000, 500.000 iterações
-Bench.run(file, "Mutually Rec (Even)", "Normal", 1_000, 500_000, fn -> EvenOdd.even_normal(1_000) end)
-Bench.run(file, "Mutually Rec (Even)", "Tail", 1_000, 500_000, fn -> EvenOdd.is_even(1_000) end)
-
-Bench.run(file, "Mutually Rec (Odd)", "Normal", 1_000, 500_000, fn -> EvenOdd.odd_normal(1_000) end)
-Bench.run(file, "Mutually Rec (Odd)", "Tail", 1_000, 500_000, fn -> EvenOdd.is_odd(1_000) end)
+Bench.run(file, "Mutually Rec (Even)", "Normal", 1_000, 500_000, freq_ghz, fn -> EvenOdd.even_normal(1_000) end)
+Bench.run(file, "Mutually Rec (Even)", "Tail",   1_000, 500_000, freq_ghz, fn -> EvenOdd.is_even(1_000) end)
+Bench.run(file, "Mutually Rec (Odd)",  "Normal", 1_000, 500_000, freq_ghz, fn -> EvenOdd.odd_normal(1_000) end)
+Bench.run(file, "Mutually Rec (Odd)",  "Tail",   1_000, 500_000, freq_ghz, fn -> EvenOdd.is_odd(1_000) end)
 
 # ----------------------------------------------------------
-# TESTE 3 — Algorithm 3: Three-state machine A→B→C→A
+# TESTE 3 — Three-state machine
 # ----------------------------------------------------------
-# k=999 (múltiplo de 3), 500.000 iterações
-Bench.run(file, "State Machine", "Normal", 999, 500_000, fn -> StateMachine.state_a_normal(999) end)
-Bench.run(file, "State Machine", "Tail", 999, 500_000, fn -> StateMachine.state_a(999) end)
+Bench.run(file, "State Machine", "Normal", 999, 500_000, freq_ghz, fn -> StateMachine.state_a_normal(999) end)
+Bench.run(file, "State Machine", "Tail",   999, 500_000, freq_ghz, fn -> StateMachine.state_a(999) end)
 
-# Fecha e salva arquivo
 BenchLogger.close(file)
