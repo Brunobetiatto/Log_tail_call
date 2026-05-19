@@ -3,7 +3,19 @@
 
 const fs = require("fs");
 const os = require("os");
-const { performance } = require("perf_hooks");
+
+function getCpuFreqGHz() {
+  try {
+    const content = fs.readFileSync("/proc/cpuinfo", "utf8");
+    const match = content.match(/cpu MHz\s*:\s*([0-9.]+)/);
+    if (match) return parseFloat(match[1]) / 1000;
+  } catch (_) {}
+  // fallback: os.cpus() (pode retornar 0 em alguns containers)
+  const speed = os.cpus()[0]?.speed;
+  return speed > 0 ? speed / 1000 : 2.0;
+}
+
+const CPU_FREQ_GHZ = getCpuFreqGHz();
 
 // ============================================================
 // LIMITES DE SEGURANÇA
@@ -27,7 +39,7 @@ class BenchLogger {
 
   start() {
     // Escreve o cabeçalho das colunas do CSV
-    this.write("Data,Algoritmo,Implementacao,N,Iteracoes,Tempo_ms,Memoria_KB");
+    this.write("Data,Algoritmo,Implementacao,N,Iteracoes,Ciclos_CPU,Ciclos_por_iter,Memoria_KB");
   }
 
   close() {
@@ -118,9 +130,9 @@ function stateALoop(k) {
 // BENCHMARK ENGINE
 // ============================================================
 function runBench(logger, algo, impl, n, iterations, func) {
-  const before   = process.memoryUsage();
-  const t0       = performance.now();
-  const deadline = Date.now() + MAX_TIME_SEC * 1000;
+  const memBefore = process.memoryUsage();
+  const cpuBefore = process.cpuUsage();
+  const deadline  = Date.now() + MAX_TIME_SEC * 1000;
   const timestamp = new Date().toISOString();
 
   try {
@@ -134,21 +146,23 @@ function runBench(logger, algo, impl, n, iterations, func) {
       }
     }
 
-    const t1        = performance.now();
-    const after     = process.memoryUsage();
-    const ms        = t1 - t0;
-    const heapDelta = (after.heapUsed - before.heapUsed) / 1024;
+    const cpuUsed      = process.cpuUsage(cpuBefore);
+    const memAfter     = process.memoryUsage();
+    const cpuSeconds   = (cpuUsed.user + cpuUsed.system) / 1e6;
+    const cycles       = cpuSeconds * CPU_FREQ_GHZ * 1e9;
+    const cyclesPerIter = cycles / iterations;
+    const heapDelta    = (memAfter.heapUsed - memBefore.heapUsed) / 1024;
 
     logger.write(
-      `"${timestamp}","${algo}","${impl}",${n},${iterations},${ms.toFixed(1)},${heapDelta.toFixed(1)}`
+      `"${timestamp}","${algo}","${impl}",${n},${iterations},${cycles.toFixed(0)},${cyclesPerIter.toFixed(2)},${heapDelta.toFixed(1)}`
     );
   } catch (e) {
     let errorMsg = e.message;
     if (e instanceof RangeError) {
       errorMsg = "STACK OVERFLOW";
     }
-    
-    // Em caso de erro, escreve a mensagem na coluna de Tempo e deixa a Memória vazia
+
+    // Em caso de erro, escreve a mensagem na coluna de Ciclos_CPU e deixa Ciclos_por_iter vazia
     logger.write(
       `"${timestamp}","${algo}","${impl}",${n},${iterations},"${errorMsg}",""`
     );

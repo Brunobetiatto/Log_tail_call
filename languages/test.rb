@@ -4,6 +4,15 @@
 require 'objspace'
 require 'timeout'
 
+def cpu_freq_ghz
+  output = File.read('/proc/cpuinfo').match(/cpu MHz\s*:\s*([\d.]+)/)&.captures&.first
+  output ? output.to_f / 1000.0 : 2.0
+rescue
+  2.0
+end
+
+CPU_FREQ_GHZ = cpu_freq_ghz
+
 # ============================================================
 # O "BOTÃO SECRETO" DO RUBY
 # ============================================================
@@ -36,7 +45,7 @@ class BenchLogger
 
   def start
     # Escreve o cabeçalho das colunas do CSV
-    write("Data,Algoritmo,Implementacao,N,Iteracoes,Tempo_ms,Memoria_KB")
+    write("Data,Algoritmo,Implementacao,N,Iteracoes,Ciclos_CPU,Ciclos_por_iter,Memoria_KB")
   end
 
   def close
@@ -155,8 +164,8 @@ def run_bench(logger, algo, impl, n, iterations, &block)
   GC.start
   mem_before = ObjectSpace.memsize_of_all / 1024.0
 
-  t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-  timestamp = Time.now.strftime("%Y-%m-%d %H:%M:%S")
+  cpu_before = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID)
+  timestamp  = Time.now.strftime("%Y-%m-%d %H:%M:%S")
 
   error_msg = nil
 
@@ -177,19 +186,21 @@ def run_bench(logger, algo, impl, n, iterations, &block)
     return
   end
 
-  t1 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-  
+  cpu_after = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID)
+
   # Força o Garbage Collector pra medir o delta de memória
   GC.start
   mem_after = ObjectSpace.memsize_of_all / 1024.0
   mem_kb = mem_after - mem_before
-  
+
   # Como o GC pode limpar variáveis externas, evitamos deltas negativos confusos
-  mem_kb = 0.0 if mem_kb < 0 
+  mem_kb = 0.0 if mem_kb < 0
 
-  ms = (t1 - t0) * 1000.0
+  cpu_seconds    = cpu_after - cpu_before
+  cycles         = cpu_seconds * CPU_FREQ_GHZ * 1e9
+  cycles_per_iter = cycles / iterations
 
-  logger.write(sprintf("\"%s\",\"%s\",\"%s\",%d,%d,%.1f,%.1f", timestamp, algo, impl, n, iterations, ms, mem_kb))
+  logger.write(sprintf("\"%s\",\"%s\",\"%s\",%d,%d,%.0f,%.2f,%.1f", timestamp, algo, impl, n, iterations, cycles, cycles_per_iter, mem_kb))
 end
 
 # ============================================================

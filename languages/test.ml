@@ -12,7 +12,7 @@ let filename = "bench_results_ocaml.csv"
 
 let start_logger () =
   let oc = open_out filename in
-  let header = "Data,Algoritmo,Implementacao,N,Iteracoes,Tempo_ms,Memoria_KB" in
+  let header = "Data,Algoritmo,Implementacao,N,Iteracoes,Ciclos_CPU,Ciclos_por_iter,Memoria_KB" in
   Printf.fprintf oc "%s\n" header;
   Printf.printf "%s\n" header;
   flush oc;
@@ -21,6 +21,25 @@ let start_logger () =
 let close_logger oc =
   close_out oc;
   Printf.printf "\nLog salvo em: %s\n" filename
+
+(* Lê a frequência da CPU em GHz a partir de /proc/cpuinfo *)
+let get_cpu_freq_ghz () =
+  try
+    let ic = open_in "/proc/cpuinfo" in
+    let freq = ref 2000.0 in
+    (try
+      while true do
+        let line = input_line ic in
+        if String.length line > 7 && String.sub line 0 7 = "cpu MHz" then begin
+          let parts = String.split_on_char ':' line in
+          freq := float_of_string (String.trim (List.nth parts 1));
+          raise Exit
+        end
+      done
+    with Exit | End_of_file -> ());
+    close_in ic;
+    !freq /. 1000.0
+  with _ -> 2.0
 
 (* Função auxiliar para gerar o timestamp *)
 let get_timestamp () =
@@ -95,11 +114,13 @@ and state_c k =
    BENCHMARK ENGINE
    ============================================================ *)
 
+let cpu_freq_ghz = get_cpu_freq_ghz ()
+
 let run_bench logger algo impl n iterations func =
   (* Força a coleta de lixo antes de medir para limpar a memória *)
   Gc.compact ();
   let mem_before = Gc.allocated_bytes () in
-  let t0 = Unix.gettimeofday () in
+  let t0 = Unix.times () in
   let timestamp = get_timestamp () in
 
   try
@@ -107,14 +128,17 @@ let run_bench logger algo impl n iterations func =
       ignore (func ())
     done;
 
-    let t1 = Unix.gettimeofday () in
+    let t1 = Unix.times () in
     let mem_after = Gc.allocated_bytes () in
-    
-    let ms = (t1 -. t0) *. 1000.0 in
+
+    let cpu_seconds = (t1.Unix.tms_utime -. t0.Unix.tms_utime)
+                    +. (t1.Unix.tms_stime -. t0.Unix.tms_stime) in
+    let cycles          = cpu_seconds *. cpu_freq_ghz *. 1e9 in
+    let cycles_per_iter = cycles /. float_of_int iterations in
     let mem_kb = (mem_after -. mem_before) /. 1024.0 in
 
-    let line = Printf.sprintf "\"%s\",\"%s\",\"%s\",%d,%d,%.1f,%.1f"
-        timestamp algo impl n iterations ms mem_kb in
+    let line = Printf.sprintf "\"%s\",\"%s\",\"%s\",%d,%d,%.0f,%.2f,%.1f"
+        timestamp algo impl n iterations cycles cycles_per_iter mem_kb in
     Printf.fprintf logger "%s\n" line;
     Printf.printf "%s\n" line;
     flush logger

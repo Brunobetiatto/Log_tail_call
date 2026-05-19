@@ -6,7 +6,7 @@ defmodule BenchLogger do
     {:ok, file} = File.open("bench_results_elixir.csv", [:write, :utf8])
 
     # Escreve o cabeçalho das colunas do CSV
-    write(file, "Data,Algoritmo,Implementacao,N,Iteracoes,Tempo_ms,Memoria_KB")
+    write(file, "Data,Algoritmo,Implementacao,N,Iteracoes,Ciclos_CPU,Ciclos_por_iter,Memoria_KB")
     file
   end
 
@@ -77,6 +77,14 @@ end
 # Benchmark Engine
 # ============================================================
 defmodule Bench do
+  defp cpu_freq_ghz do
+    output = :os.cmd('grep -m1 "cpu MHz" /proc/cpuinfo') |> to_string()
+    case Regex.run(~r/:\s*([\d.]+)/, output) do
+      [_, freq] -> String.to_float(freq) / 1000.0
+      _ -> 2.0
+    end
+  end
+
   def run(file, algo, impl, n, iterations, func) do
     :erlang.garbage_collect()
 
@@ -84,23 +92,25 @@ defmodule Bench do
     heap_before = :erlang.process_info(self(), :total_heap_size) |> elem(1)
     mem_before  = (heap_before + words_before) * :erlang.system_info(:wordsize)
 
-    t0 = System.monotonic_time(:millisecond)
+    :erlang.statistics(:runtime)
     Enum.each(1..iterations, fn _ -> func.() end)
-    t1 = System.monotonic_time(:millisecond)
+    {_, delta_ms} = :erlang.statistics(:runtime)
 
     {_, words_after, _} = :erlang.statistics(:garbage_collection)
     heap_after = :erlang.process_info(self(), :total_heap_size) |> elem(1)
     mem_after  = (heap_after + words_after) * :erlang.system_info(:wordsize)
 
-    ms  = t1 - t0
+    freq_ghz       = cpu_freq_ghz()
+    cycles         = delta_ms / 1000.0 * freq_ghz * 1.0e9
+    cycles_per_iter = cycles / iterations
     mem = (mem_after - mem_before) / 1024.0
 
     timestamp = DateTime.utc_now() |> DateTime.to_string()
 
     # Formata a string preservando as aspas no texto para proteger o CSV
-    # Usamos ~ts para strings de texto e ~.1f para float com 1 casa decimal
-    line = :io_lib.format("\"~ts\",\"~ts\",\"~ts\",~w,~w,~.1f,~.1f",
-                          [timestamp, algo, impl, n, iterations, ms * 1.0, mem])
+    # ~.0f não é suportado no Erlang/OTP 24 (stdlib 3.17); usamos round/1 + ~w
+    line = :io_lib.format("\"~ts\",\"~ts\",\"~ts\",~w,~w,~w,~.2f,~.1f",
+                          [timestamp, algo, impl, n, iterations, round(cycles), cycles_per_iter, mem])
            |> IO.chardata_to_string()
 
     BenchLogger.write(file, line)
