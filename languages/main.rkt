@@ -14,7 +14,7 @@
 
 (define (log-start)
   ;; Escreve o cabeçalho das colunas do CSV
-  (log-write "Data,Algoritmo,Implementacao,N,Iteracoes,Tempo_ms,Memoria_KB"))
+  (log-write "Data,Algoritmo,Implementacao,N,Iteracoes,Ciclos_CPU,Ciclos_por_iter,Memoria_KB"))
 
 (define (log-close)
   (close-output-port log-port)
@@ -83,29 +83,43 @@
       (state-a (- k 1))))
 
 ;; ============================================================
+;; CPU FREQUENCY
+;; ============================================================
+(define (get-cpu-freq-ghz)
+  (with-handlers ([exn:fail? (lambda (_) 2.0)])
+    (define content (file->string "/proc/cpuinfo"))
+    (define m (regexp-match #rx"cpu MHz[ \t]*:[ \t]*([0-9.]+)" content))
+    (if m (/ (string->number (cadr m)) 1000.0) 2.0)))
+
+(define cpu-freq-ghz (get-cpu-freq-ghz))
+
+;; ============================================================
 ;; BENCHMARK ENGINE
 ;; ============================================================
 (define (run-bench thunk iterations)
   (collect-garbage) (collect-garbage)
   (define mem-before (current-memory-use 'cumulative))
-  (define t0 (current-inexact-milliseconds))
+  (define t0 (current-process-milliseconds))
   (for ([_ (in-range iterations)]) (thunk))
-  (define t1 (current-inexact-milliseconds))
+  (define t1 (current-process-milliseconds))
   (define mem-after (current-memory-use 'cumulative))
   (values (- t1 t0) (- mem-after mem-before)))
 
 ;; Refatorado para receber todos os metadados e imprimir em colunas separadas por vírgula
 (define (benchmark! algo impl n iterations thunk)
-  (define-values (ms mem) (run-bench thunk iterations))
+  (define-values (cpu-ms mem) (run-bench thunk iterations))
   (define current-time (date->string (current-date) #t))
-  
-  (log-write (format "\"~a\",\"~a\",\"~a\",~a,~a,~a,~a"
+  (define cycles (* (/ cpu-ms 1000.0) cpu-freq-ghz 1e9))
+  (define cycles-per-iter (/ cycles iterations))
+
+  (log-write (format "\"~a\",\"~a\",\"~a\",~a,~a,~a,~a,~a"
                      current-time
                      algo
                      impl
                      n
                      iterations
-                     (~r ms #:precision 1)
+                     (~r cycles #:precision 0)
+                     (~r cycles-per-iter #:precision 2)
                      (~r (/ mem 1024.0) #:precision 1))))
 
 ;; ============================================================

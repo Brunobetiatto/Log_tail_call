@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 set -e # Para o script se algo der erro
 
 echo "=== Iniciando execução dos benchmarks ==="

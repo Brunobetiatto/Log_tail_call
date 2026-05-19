@@ -15,8 +15,8 @@ for lang in ['ocaml', 'python', 'ruby', 'scheme', 'elixir', 'node']:
 combined = pd.concat(dfs, ignore_index=True)
 combined['Linguagem'] = combined['Linguagem'].replace({'NODE': 'Node.js'})
 
-# Convert TIMEOUT → NaN, coerce to float
-combined['Tempo_ms'] = pd.to_numeric(combined['Tempo_ms'], errors='coerce')
+# Convert TIMEOUT / STACK OVERFLOW → NaN, coerce to float
+combined['Ciclos_CPU'] = pd.to_numeric(combined['Ciclos_CPU'], errors='coerce')
 
 # Normalize: time per single iteration (µs)
 combined['cycles_per_iter'] = pd.to_numeric(combined['Ciclos_por_iter'], errors='coerce')
