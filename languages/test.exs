@@ -162,13 +162,10 @@ defmodule Bench do
 
     timestamp = DateTime.utc_now() |> DateTime.to_string()
 
-    line =
-      :io_lib.format(
-        "\"~ts\",\"~ts\",\"~ts\",~w,~w,~.0f,~.2f,~.1f",
-        [timestamp, algo, impl, n, iterations, cycles_total, cycles_per_iter, mem_kb]
-      )
-      |> IO.chardata_to_string()
+    # 1. Cria a string formatada de forma simples e limpa
+    line = "\"#{timestamp}\",\"#{algo}\",\"#{impl}\",#{n},#{iterations},#{round(cycles_total)},#{Float.round(cycles_per_iter * 1.0, 2)},#{Float.round(mem_kb * 1.0, 1)}"
 
+    # 2. Envia para o seu Logger (que já salva no arquivo e imprime na tela)
     BenchLogger.write(file, line)
   end
 

@@ -11,7 +11,8 @@ function getCpuFreqGHz() {
     if (match) return parseFloat(match[1]) / 1000;
   } catch (_) {}
   // fallback: os.cpus() (pode retornar 0 em alguns containers)
-  const speed = os.cpus()[0]?.speed;
+  const cpus = os.cpus();
+  const speed = (cpus && cpus.length > 0) ? cpus[0].speed : 0;
   return speed > 0 ? speed / 1000 : 2.0;
 }
 
@@ -164,7 +165,7 @@ function runBench(logger, algo, impl, n, iterations, func) {
 
     // Em caso de erro, escreve a mensagem na coluna de Ciclos_CPU e deixa Ciclos_por_iter vazia
     logger.write(
-      `"${timestamp}","${algo}","${impl}",${n},${iterations},"${errorMsg}",""`
+      `"${timestamp}","${algo}","${impl}",${n},${iterations},"${errorMsg}","",""`
     );
   }
 }
@@ -195,6 +196,7 @@ runBench(logger, "Mutually Rec (Even)", "Normal", 1000, 500_000, () => evenNorma
 runBench(logger, "Mutually Rec (Even)", "Loop", 1000, 500_000, () => isEvenLoop(1_000));
 
 runBench(logger, "Mutually Rec (Odd)", "Normal", 1000, 500_000, () => oddNormal(1_000));
+runBench(logger, "Mutually Rec (Odd)", "Loop", 1000, 500_000, () => isEvenLoop(1_000));
 
 // ----------------------------------------------------------
 // TESTE 3 — Algorithm 3: Three-state machine A→B→C→A
