@@ -1,13 +1,40 @@
+# Erlang/Elixir
 /erl_crash.dump
-.o 
+
+# OCaml build artifacts
+*.o
+*.cmi
+*.cmx
+*.cmo
+languages/test_ocaml
+languages/test.pdf
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+
+# Resultados (gerados, não versionados)
+bench_results_*.csv
+bench_results/
+outputs/*.png
+benchmark_comparativo.png
+analysis univariate plot/
+
+# Charts antigos (substituídos por bench_growth_charts.py)
+outputs/bench_charts*.py
+
+# LaTeX
 .aux
 latex/test.log
 latex/test.out
 latex/test.fls
 latex/test.fdb_latexmk
 latex/test.synctex.gz
-latex/test.bbl 
+latex/test.bbl
 latex/test.blg
 latex/test.run.xml
-latex/test.aux 
+latex/test.aux
 latex/test.bcf

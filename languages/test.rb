@@ -4,6 +4,15 @@
 require 'objspace'
 require 'timeout'
 
+# ============================================================
+# REPRODUTIBILIDADE
+# ============================================================
+SEED = 42
+srand(SEED)
+
+# ============================================================
+# CPU FREQ
+# ============================================================
 def cpu_freq_ghz
   output = File.read('/proc/cpuinfo').match(/cpu MHz\s*:\s*([\d.]+)/)&.captures&.first
   output ? output.to_f / 1000.0 : 2.0
@@ -11,22 +20,33 @@ rescue
   2.0
 end
 
-CPU_FREQ_GHZ = cpu_freq_ghz
-
 # ============================================================
-# O "BOTÃO SECRETO" DO RUBY
+# Habilita TCO (precisa estar antes das definicoes)
 # ============================================================
-# Ativa a Otimização de Chamada de Cauda (TCO) na Máquina Virtual.
-# Precisa ser definida ANTES dos métodos serem declarados no arquivo.
 RubyVM::InstructionSequence.compile_option = {
   tailcall_optimization: true,
   trace_instruction: false
 }
 
 # ============================================================
-# LIMITES DE SEGURANÇA
+# LIMITES DE SEGURANCA
 # ============================================================
-MAX_TIME_SEC = 120
+MAX_TIME_SEC   = 60
+
+QUICK          = ENV['BENCH_QUICK'] == '1'
+RUNS_PER_POINT = QUICK ? 2 : 10
+
+# ============================================================
+# SWEEP DE ITERACOES (escala log)
+# ============================================================
+if QUICK
+  SWEEP_CHEAP            = [10_000, 100_000]
+  SWEEP_FACTORIAL_BIGNUM = [200, 1_000]
+  puts "[BENCH_QUICK=1] usando sweep reduzido e 2 runs por ponto"
+else
+  SWEEP_CHEAP            = [10_000, 30_000, 100_000, 300_000, 1_000_000]
+  SWEEP_FACTORIAL_BIGNUM = [200, 500, 1_000, 3_000, 10_000]
+end
 
 # ============================================================
 # LOGGER (Formato CSV)
@@ -44,8 +64,7 @@ class BenchLogger
   end
 
   def start
-    # Escreve o cabeçalho das colunas do CSV
-    write("Data,Algoritmo,Implementacao,N,Iteracoes,Ciclos_CPU,Ciclos_por_iter,Memoria_KB")
+    write("Data,Algoritmo,Implementacao,N,Iteracoes,Run,Ciclos_CPU,Ciclos_por_iter,Memoria_KB,Freq_GHz")
   end
 
   def close
@@ -55,9 +74,8 @@ class BenchLogger
 end
 
 # ============================================================
-# Algorithm 1 — Factorial with accumulator (self-tail)
+# Algorithm 1 -- Factorial
 # ============================================================
-
 def factorial_normal(n)
   return 1 if n == 0
   n * factorial_normal(n - 1)
@@ -78,9 +96,8 @@ def factorial_loop(n)
 end
 
 # ============================================================
-# Algorithm 2 — Mutually recursive even/odd
+# Algorithm 2 -- Mutually recursive even/odd
 # ============================================================
-
 def even_normal(n)
   return true if n == 0
   odd_normal(n - 1)
@@ -111,9 +128,8 @@ def is_even_loop(n)
 end
 
 # ============================================================
-# Algorithm 3 — Three-state machine (A → B → C → A)
+# Algorithm 3 -- Three-state machine
 # ============================================================
-
 def state_a_normal(k)
   return :finished if k == 0
   state_b_normal(k - 1)
@@ -158,17 +174,16 @@ def state_a_loop(k)
 end
 
 # ============================================================
-# BENCHMARK ENGINE COM PROTEÇÕES
+# BENCHMARK ENGINE
 # ============================================================
-def run_bench(logger, algo, impl, n, iterations, &block)
+def run_single(logger, algo, impl, n, iterations, run_id, &block)
+  freq_ghz   = cpu_freq_ghz
   GC.start
   mem_before = ObjectSpace.memsize_of_all / 1024.0
-
   cpu_before = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID)
   timestamp  = Time.now.strftime("%Y-%m-%d %H:%M:%S")
 
   error_msg = nil
-
   begin
     Timeout.timeout(MAX_TIME_SEC) do
       iterations.times { block.call }
@@ -182,64 +197,84 @@ def run_bench(logger, algo, impl, n, iterations, &block)
   end
 
   if error_msg
-    logger.write("\"#{timestamp}\",\"#{algo}\",\"#{impl}\",#{n},#{iterations},\"#{error_msg}\",\"\"")
-    return
+    logger.write(sprintf("\"%s\",\"%s\",\"%s\",%d,%d,%d,\"%s\",\"\",\"\",%.4f",
+                        timestamp, algo, impl, n, iterations, run_id, error_msg, freq_ghz))
+    return error_msg
   end
 
   cpu_after = Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID)
-
-  # Força o Garbage Collector pra medir o delta de memória
   GC.start
   mem_after = ObjectSpace.memsize_of_all / 1024.0
   mem_kb = mem_after - mem_before
-
-  # Como o GC pode limpar variáveis externas, evitamos deltas negativos confusos
   mem_kb = 0.0 if mem_kb < 0
 
-  cpu_seconds    = cpu_after - cpu_before
-  cycles         = cpu_seconds * CPU_FREQ_GHZ * 1e9
+  cpu_seconds     = cpu_after - cpu_before
+  cycles          = cpu_seconds * freq_ghz * 1e9
   cycles_per_iter = cycles / iterations
 
-  logger.write(sprintf("\"%s\",\"%s\",\"%s\",%d,%d,%.0f,%.2f,%.1f", timestamp, algo, impl, n, iterations, cycles, cycles_per_iter, mem_kb))
+  logger.write(sprintf("\"%s\",\"%s\",\"%s\",%d,%d,%d,%.0f,%.2f,%.1f,%.4f",
+                      timestamp, algo, impl, n, iterations, run_id, cycles, cycles_per_iter, mem_kb, freq_ghz))
+  "OK"
+end
+
+def run_sweep(logger, algo, impl, n, sweep, &block)
+  consecutive_fails = 0
+  sweep.each do |iter_count|
+    if consecutive_fails >= 2
+      (1..RUNS_PER_POINT).each do |r|
+        ts = Time.now.strftime("%Y-%m-%d %H:%M:%S")
+        logger.write(sprintf("\"%s\",\"%s\",\"%s\",%d,%d,%d,\"SKIPPED\",\"\",\"\",0.0000", ts, algo, impl, n, iter_count, r))
+      end
+      next
+    end
+
+    fails = 0
+    (1..RUNS_PER_POINT).each do |r|
+      status = run_single(logger, algo, impl, n, iter_count, r, &block)
+      if ["TIMEOUT", "STACK OVERFLOW"].include?(status)
+        fails += 1
+        if fails >= 2 && r < RUNS_PER_POINT
+          ((r + 1)..RUNS_PER_POINT).each do |skip|
+            ts = Time.now.strftime("%Y-%m-%d %H:%M:%S")
+            logger.write(sprintf("\"%s\",\"%s\",\"%s\",%d,%d,%d,\"SKIPPED\",\"\",\"\",0.0000", ts, algo, impl, n, iter_count, skip))
+          end
+          break
+        end
+      end
+    end
+    if fails >= (RUNS_PER_POINT / 2.0).ceil
+      consecutive_fails += 1
+    else
+      consecutive_fails = 0
+    end
+  end
 end
 
 # ============================================================
 # TESTES
 # ============================================================
-
 logger = BenchLogger.new
 logger.start
 
-# ----------------------------------------------------------
-# TESTE 1 — Algorithm 1: Factorial with accumulator
-# ----------------------------------------------------------
-# n=10, 500.000 iterações
-run_bench(logger, "Factorial", "Normal", 10, 500_000) { factorial_normal(10) }
-run_bench(logger, "Factorial", "Tail (TCO)", 10, 500_000) { factorial_tail(10) }
-run_bench(logger, "Factorial", "Loop", 10, 500_000) { factorial_loop(10) }
+# ----- Factorial -----
+run_sweep(logger, "Factorial", "Normal",     10,   SWEEP_CHEAP)            { factorial_normal(10) }
+run_sweep(logger, "Factorial", "Tail (TCO)", 10,   SWEEP_CHEAP)            { factorial_tail(10) }
+run_sweep(logger, "Factorial", "Loop",       10,   SWEEP_CHEAP)            { factorial_loop(10) }
+run_sweep(logger, "Factorial", "Normal",     1000, SWEEP_FACTORIAL_BIGNUM) { factorial_normal(1000) }
+run_sweep(logger, "Factorial", "Tail (TCO)", 1000, SWEEP_FACTORIAL_BIGNUM) { factorial_tail(1000) }
+run_sweep(logger, "Factorial", "Loop",       1000, SWEEP_FACTORIAL_BIGNUM) { factorial_loop(1000) }
 
-# n=1000, 10.000 iterações (Ruby tem Bignums nativos automáticos)
-run_bench(logger, "Factorial", "Normal", 1000, 10_000) { factorial_normal(1000) }
-run_bench(logger, "Factorial", "Tail (TCO)", 1000, 10_000) { factorial_tail(1000) }
-run_bench(logger, "Factorial", "Loop", 1000, 10_000) { factorial_loop(1000) }
+# ----- Mutually Recursive -----
+run_sweep(logger, "Mutually Rec (Even)", "Normal",     1000, SWEEP_CHEAP) { even_normal(1000) }
+run_sweep(logger, "Mutually Rec (Even)", "Tail (TCO)", 1000, SWEEP_CHEAP) { is_even(1000) }
+run_sweep(logger, "Mutually Rec (Even)", "Loop",       1000, SWEEP_CHEAP) { is_even_loop(1000) }
 
-# ----------------------------------------------------------
-# TESTE 2 — Algorithm 2: Mutually recursive even/odd
-# ----------------------------------------------------------
-# n=1000, 500.000 iterações
-run_bench(logger, "Mutually Rec (Even)", "Normal", 1000, 500_000) { even_normal(1000) }
-run_bench(logger, "Mutually Rec (Even)", "Tail (TCO)", 1000, 500_000) { is_even(1000) }
-run_bench(logger, "Mutually Rec (Even)", "Loop", 1000, 500_000) { is_even_loop(1000) }
+run_sweep(logger, "Mutually Rec (Odd)", "Normal",     1000, SWEEP_CHEAP) { odd_normal(1000) }
+run_sweep(logger, "Mutually Rec (Odd)", "Tail (TCO)", 1000, SWEEP_CHEAP) { is_odd(1000) }
 
-run_bench(logger, "Mutually Rec (Odd)", "Normal", 1000, 500_000) { odd_normal(1000) }
-run_bench(logger, "Mutually Rec (Odd)", "Tail (TCO)", 1000, 500_000) { is_odd(1000) }
-
-# ----------------------------------------------------------
-# TESTE 3 — Algorithm 3: Three-state machine A→B→C→A
-# ----------------------------------------------------------
-# k=999 (múltiplo de 3), 500.000 iterações
-run_bench(logger, "State Machine", "Normal", 999, 500_000) { state_a_normal(999) }
-run_bench(logger, "State Machine", "Tail (TCO)", 999, 500_000) { state_a(999) }
-run_bench(logger, "State Machine", "Loop", 999, 500_000) { state_a_loop(999) }
+# ----- State Machine -----
+run_sweep(logger, "State Machine", "Normal",     999, SWEEP_CHEAP) { state_a_normal(999) }
+run_sweep(logger, "State Machine", "Tail (TCO)", 999, SWEEP_CHEAP) { state_a(999) }
+run_sweep(logger, "State Machine", "Loop",       999, SWEEP_CHEAP) { state_a_loop(999) }
 
 logger.close

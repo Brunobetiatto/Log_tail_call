@@ -4,6 +4,7 @@
 import time
 import gc
 import sys
+import random
 import tracemalloc
 import threading
 import os
@@ -11,14 +12,34 @@ import psutil
 from datetime import datetime
 
 # ============================================================
-# LIMITES DE SEGURANÇA
+# REPRODUTIBILIDADE
+# ============================================================
+SEED = 42
+random.seed(SEED)
+
+# ============================================================
+# LIMITES DE SEGURANCA
 # ============================================================
 MAX_RAM_MB   = 2000
 MAX_CPU_PCT  = 80
-MAX_TIME_SEC = 120
+MAX_TIME_SEC = 60
+
+QUICK = os.environ.get('BENCH_QUICK', '0') == '1'
+RUNS_PER_POINT = 2 if QUICK else 10
 
 sys.setrecursionlimit(100000)
 sys.set_int_max_str_digits(0)
+
+# ============================================================
+# SWEEP DE ITERACOES (escala log)
+# ============================================================
+if QUICK:
+    SWEEP_CHEAP            = [10_000, 100_000]
+    SWEEP_FACTORIAL_BIGNUM = [200, 1_000]
+    print("[BENCH_QUICK=1] usando sweep reduzido e 2 runs por ponto")
+else:
+    SWEEP_CHEAP            = [10_000, 30_000, 100_000, 300_000, 1_000_000]
+    SWEEP_FACTORIAL_BIGNUM = [200, 500, 1_000, 3_000, 10_000]
 
 # ============================================================
 # MONITOR DE RECURSOS
@@ -71,15 +92,26 @@ class BenchLogger:
         self.file.flush()
 
     def start(self):
-        # Escreve o cabeçalho das colunas do CSV
-        self.write("Data,Algoritmo,Implementacao,N,Iteracoes,Ciclos_CPU,Ciclos_por_iter,Memoria_KB")
+        self.write("Data,Algoritmo,Implementacao,N,Iteracoes,Run,Ciclos_CPU,Ciclos_por_iter,Memoria_KB,Freq_GHz")
 
     def close(self):
         self.file.close()
         print(f"\nLog salvo em: {self.filename}")
 
 # ============================================================
-# Algorithm 1 — Factorial with accumulator (self-tail)
+# CPU FREQ
+# ============================================================
+def cpu_freq_ghz():
+    try:
+        freq = psutil.cpu_freq()
+        if freq and freq.current:
+            return freq.current / 1000.0
+    except Exception:
+        pass
+    return 2.0
+
+# ============================================================
+# Algorithm 1 -- Factorial with accumulator (self-tail)
 # ============================================================
 
 def factorial_normal(n):
@@ -95,7 +127,7 @@ def factorial_tail(n):
     return acc
 
 # ============================================================
-# Algorithm 2 — Mutually recursive even/odd
+# Algorithm 2 -- Mutually recursive even/odd
 # ============================================================
 
 def even_normal(n):
@@ -116,7 +148,7 @@ def is_even_loop(n):
         n -= 1
 
 # ============================================================
-# Algorithm 3 — Three-state machine (A → B → C → A)
+# Algorithm 3 -- Three-state machine (A -> B -> C -> A)
 # ============================================================
 
 def state_a_normal(k):
@@ -141,9 +173,9 @@ def state_a_loop(k):
         else:              state = "A"
 
 # ============================================================
-# BENCHMARK ENGINE COM PROTEÇÕES
+# BENCHMARK ENGINE COM PROTECOES
 # ============================================================
-def run_bench(logger, algo, impl, n, iterations, func):
+def run_single(algo, impl, n, iterations, run_id, func, freq_ghz):
     result_holder = [None]
     error_holder  = [None]
     done_event    = threading.Event()
@@ -152,7 +184,6 @@ def run_bench(logger, algo, impl, n, iterations, func):
         try:
             gc.collect()
             tracemalloc.start()
-            cpu_freq_ghz = psutil.cpu_freq().current / 1000.0  # MHz → GHz
             t0 = time.process_time()
             for _ in range(iterations):
                 func()
@@ -163,7 +194,7 @@ def run_bench(logger, algo, impl, n, iterations, func):
             _, peak = tracemalloc.get_traced_memory()
             tracemalloc.stop()
             cpu_seconds = t1 - t0
-            cycles = cpu_seconds * cpu_freq_ghz * 1e9  # ciclos totais
+            cycles = cpu_seconds * freq_ghz * 1e9
             result_holder[0] = (cycles, peak / 1024.0)
         except RecursionError:
             error_holder[0] = "STACK OVERFLOW"
@@ -180,24 +211,49 @@ def run_bench(logger, algo, impl, n, iterations, func):
     finished = done_event.wait(timeout=MAX_TIME_SEC)
     monitor.stop()
 
-    # Formatação da data atual para o CSV
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Se a thread não terminou a tempo
     if not finished:
         tracemalloc.stop()
-        logger.write(f'"{timestamp}","{algo}","{impl}",{n},{iterations},"TIMEOUT",""')
-        return
-    
-    # Se houve estouro de pilha ou memória
-    if error_holder[0]:
-        logger.write(f'"{timestamp}","{algo}","{impl}",{n},{iterations},"{error_holder[0]}",""')
-        return
+        return f'"{timestamp}","{algo}","{impl}",{n},{iterations},{run_id},"TIMEOUT","","",{freq_ghz:.4f}'
 
-    # Execução bem-sucedida
+    if error_holder[0]:
+        return f'"{timestamp}","{algo}","{impl}",{n},{iterations},{run_id},"{error_holder[0]}","","",{freq_ghz:.4f}'
+
     cycles_total, mem_kb = result_holder[0]
     cycles_per_iter = cycles_total / iterations
-    logger.write(f'"{timestamp}","{algo}","{impl}",{n},{iterations},{cycles_total:.0f},{cycles_per_iter:.2f},{mem_kb:.1f}')
+    return f'"{timestamp}","{algo}","{impl}",{n},{iterations},{run_id},{cycles_total:.0f},{cycles_per_iter:.2f},{mem_kb:.1f},{freq_ghz:.4f}'
+
+
+def run_sweep(logger, algo, impl, n, sweep, func_factory):
+    """Roda 10 runs para cada iter_count no sweep e loga cada um."""
+    consecutive_timeouts = 0
+    for iter_count in sweep:
+        # Se ja deu 2 timeouts seguidos, pula o resto do sweep (ja sabemos que vai estourar)
+        if consecutive_timeouts >= 2:
+            for run_id in range(1, RUNS_PER_POINT + 1):
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                logger.write(f'"{ts}","{algo}","{impl}",{n},{iter_count},{run_id},"SKIPPED","","",0.0000')
+            continue
+
+        timeouts_at_this_point = 0
+        for run_id in range(1, RUNS_PER_POINT + 1):
+            freq = cpu_freq_ghz()
+            line = run_single(algo, impl, n, iter_count, run_id, func_factory(), freq)
+            logger.write(line)
+            if '"TIMEOUT"' in line or '"STACK OVERFLOW"' in line:
+                timeouts_at_this_point += 1
+                # Se o primeiro run ja deu erro, nao adianta repetir 10x
+                if timeouts_at_this_point >= 2 and run_id < RUNS_PER_POINT:
+                    for skip_id in range(run_id + 1, RUNS_PER_POINT + 1):
+                        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        logger.write(f'"{ts}","{algo}","{impl}",{n},{iter_count},{skip_id},"SKIPPED","","",0.0000')
+                    break
+
+        if timeouts_at_this_point >= RUNS_PER_POINT // 2:
+            consecutive_timeouts += 1
+        else:
+            consecutive_timeouts = 0
 
 
 # ============================================================
@@ -206,34 +262,21 @@ def run_bench(logger, algo, impl, n, iterations, func):
 logger = BenchLogger()
 logger.start()
 
-# ----------------------------------------------------------
-# TESTE 1 — Algorithm 1: Factorial with accumulator
-# ----------------------------------------------------------
-# n=10, 500.000 iterações (sem bignum)
-run_bench(logger, "Factorial", "Normal", 10, 500_000, lambda: factorial_normal(10))
-run_bench(logger, "Factorial", "Loop/Tail", 10, 500_000, lambda: factorial_tail(10))
+# ----- Factorial -----
+run_sweep(logger, "Factorial", "Normal",     10,   SWEEP_CHEAP,            lambda: lambda: factorial_normal(10))
+run_sweep(logger, "Factorial", "Loop/Tail",  10,   SWEEP_CHEAP,            lambda: lambda: factorial_tail(10))
+run_sweep(logger, "Factorial", "Normal",     1000, SWEEP_FACTORIAL_BIGNUM, lambda: lambda: factorial_normal(1000))
+run_sweep(logger, "Factorial", "Loop/Tail",  1000, SWEEP_FACTORIAL_BIGNUM, lambda: lambda: factorial_tail(1000))
 
-# n=1000, 10.000 iterações (com bignum)
-run_bench(logger, "Factorial", "Normal", 1000, 10_000, lambda: factorial_normal(1000))
-run_bench(logger, "Factorial", "Loop/Tail", 1000, 10_000, lambda: factorial_tail(1000))
+# ----- Mutually Recursive -----
+run_sweep(logger, "Mutually Rec (Even)", "Normal", 1000, SWEEP_CHEAP, lambda: lambda: even_normal(1000))
+run_sweep(logger, "Mutually Rec (Even)", "Loop",   1000, SWEEP_CHEAP, lambda: lambda: is_even_loop(1000))
 
+run_sweep(logger, "Mutually Rec (Odd)", "Normal", 1000, SWEEP_CHEAP, lambda: lambda: odd_normal(1000))
+run_sweep(logger, "Mutually Rec (Odd)", "Loop",   1000, SWEEP_CHEAP, lambda: lambda: is_even_loop(1000))
 
-# ----------------------------------------------------------
-# TESTE 2 — Algorithm 2: Mutually recursive even/odd
-# ----------------------------------------------------------
-# n=1000, 500.000 iterações
-run_bench(logger, "Mutually Rec (Even)", "Normal", 1000, 500_000, lambda: even_normal(1_000))
-run_bench(logger, "Mutually Rec (Even)", "Loop", 1000, 500_000, lambda: is_even_loop(1_000))
-
-run_bench(logger, "Mutually Rec (Odd)", "Normal", 1000, 500_000, lambda: odd_normal(1_000))
-run_bench(logger, "Mutually Rec (Odd)", "Loop", 1000, 500_000, lambda: is_even_loop(1_000))
-
-
-# ----------------------------------------------------------
-# TESTE 3 — Algorithm 3: Three-state machine A→B→C→A
-# ----------------------------------------------------------
-# k=999 (múltiplo de 3), 500.000 iterações
-run_bench(logger, "State Machine", "Normal", 999, 500_000, lambda: state_a_normal(999))
-run_bench(logger, "State Machine", "Loop", 999, 500_000, lambda: state_a_loop(999))
+# ----- State Machine -----
+run_sweep(logger, "State Machine", "Normal", 999, SWEEP_CHEAP, lambda: lambda: state_a_normal(999))
+run_sweep(logger, "State Machine", "Loop",   999, SWEEP_CHEAP, lambda: lambda: state_a_loop(999))
 
 logger.close()

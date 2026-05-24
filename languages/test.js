@@ -3,26 +3,48 @@
 
 const fs = require("fs");
 const os = require("os");
+const seedrandom = require("seedrandom");
 
+// ============================================================
+// REPRODUTIBILIDADE
+// ============================================================
+const SEED = 42;
+// Substitui Math.random global por um PRNG seedado.
+// Os algoritmos nao usam random, mas isso garante que qualquer
+// chamada indireta (V8, libs) tambem fique deterministica.
+seedrandom(String(SEED), { global: true });
+
+// ============================================================
+// CPU FREQ
+// ============================================================
 function getCpuFreqGHz() {
   try {
     const content = fs.readFileSync("/proc/cpuinfo", "utf8");
     const match = content.match(/cpu MHz\s*:\s*([0-9.]+)/);
     if (match) return parseFloat(match[1]) / 1000;
   } catch (_) {}
-  // fallback: os.cpus() (pode retornar 0 em alguns containers)
   const cpus = os.cpus();
   const speed = (cpus && cpus.length > 0) ? cpus[0].speed : 0;
   return speed > 0 ? speed / 1000 : 2.0;
 }
 
-const CPU_FREQ_GHZ = getCpuFreqGHz();
+// ============================================================
+// LIMITES DE SEGURANCA
+// ============================================================
+const MAX_RAM_MB     = 500;
+const MAX_TIME_SEC   = 60;
+
+const QUICK = process.env.BENCH_QUICK === '1';
+const RUNS_PER_POINT = QUICK ? 2 : 10;
 
 // ============================================================
-// LIMITES DE SEGURANÇA
+// SWEEP DE ITERACOES (escala log)
 // ============================================================
-const MAX_RAM_MB   = 500;
-const MAX_TIME_SEC = 10;
+const SWEEP_CHEAP            = QUICK ? [10_000, 100_000]
+                                     : [10_000, 30_000, 100_000, 300_000, 1_000_000];
+const SWEEP_FACTORIAL_BIGNUM = QUICK ? [200, 1_000]
+                                     : [200, 500, 1_000, 3_000, 10_000];
+if (QUICK) console.log("[BENCH_QUICK=1] usando sweep reduzido e 2 runs por ponto");
 
 // ============================================================
 // LOGGER (Formato CSV)
@@ -39,8 +61,7 @@ class BenchLogger {
   }
 
   start() {
-    // Escreve o cabeçalho das colunas do CSV
-    this.write("Data,Algoritmo,Implementacao,N,Iteracoes,Ciclos_CPU,Ciclos_por_iter,Memoria_KB");
+    this.write("Data,Algoritmo,Implementacao,N,Iteracoes,Run,Ciclos_CPU,Ciclos_por_iter,Memoria_KB,Freq_GHz");
   }
 
   close() {
@@ -57,7 +78,7 @@ function getRamMB() {
 }
 
 // ============================================================
-// Algorithm 1 — Factorial with accumulator (self-tail)
+// Algorithm 1 -- Factorial with accumulator (self-tail)
 // ============================================================
 
 function factorialNormal(n) {
@@ -75,7 +96,7 @@ function factorialTail(n) {
 }
 
 // ============================================================
-// Algorithm 2 — Mutually recursive even/odd
+// Algorithm 2 -- Mutually recursive even/odd
 // ============================================================
 
 function evenNormal(n) {
@@ -98,7 +119,7 @@ function isEvenLoop(n) {
 }
 
 // ============================================================
-// Algorithm 3 — Three-state machine (A → B → C → A)
+// Algorithm 3 -- Three-state machine (A -> B -> C -> A)
 // ============================================================
 
 function stateANormal(k) {
@@ -130,7 +151,8 @@ function stateALoop(k) {
 // ============================================================
 // BENCHMARK ENGINE
 // ============================================================
-function runBench(logger, algo, impl, n, iterations, func) {
+function runSingle(logger, algo, impl, n, iterations, runId, func) {
+  const freqGhz   = getCpuFreqGHz();
   const memBefore = process.memoryUsage();
   const cpuBefore = process.cpuUsage();
   const deadline  = Date.now() + MAX_TIME_SEC * 1000;
@@ -139,34 +161,60 @@ function runBench(logger, algo, impl, n, iterations, func) {
   try {
     for (let i = 0; i < iterations; i++) {
       func();
-
-      // Checagens de segurança a cada 1000 iterações para não pesar no loop
       if (i % 1000 === 0) {
         if (Date.now() > deadline) throw new Error("TIMEOUT");
         if (getRamMB() > MAX_RAM_MB) throw new Error("OOM (RAM Excedida)");
       }
     }
 
-    const cpuUsed      = process.cpuUsage(cpuBefore);
-    const memAfter     = process.memoryUsage();
-    const cpuSeconds   = (cpuUsed.user + cpuUsed.system) / 1e6;
-    const cycles       = cpuSeconds * CPU_FREQ_GHZ * 1e9;
+    const cpuUsed       = process.cpuUsage(cpuBefore);
+    const memAfter      = process.memoryUsage();
+    const cpuSeconds    = (cpuUsed.user + cpuUsed.system) / 1e6;
+    const cycles        = cpuSeconds * freqGhz * 1e9;
     const cyclesPerIter = cycles / iterations;
-    const heapDelta    = (memAfter.heapUsed - memBefore.heapUsed) / 1024;
+    const heapDelta     = (memAfter.heapUsed - memBefore.heapUsed) / 1024;
 
     logger.write(
-      `"${timestamp}","${algo}","${impl}",${n},${iterations},${cycles.toFixed(0)},${cyclesPerIter.toFixed(2)},${heapDelta.toFixed(1)}`
+      `"${timestamp}","${algo}","${impl}",${n},${iterations},${runId},${cycles.toFixed(0)},${cyclesPerIter.toFixed(2)},${heapDelta.toFixed(1)},${freqGhz.toFixed(4)}`
     );
+    return "OK";
   } catch (e) {
     let errorMsg = e.message;
-    if (e instanceof RangeError) {
-      errorMsg = "STACK OVERFLOW";
+    if (e instanceof RangeError) errorMsg = "STACK OVERFLOW";
+    logger.write(
+      `"${timestamp}","${algo}","${impl}",${n},${iterations},${runId},"${errorMsg}","","",${freqGhz.toFixed(4)}`
+    );
+    return errorMsg;
+  }
+}
+
+function runSweep(logger, algo, impl, n, sweep, funcFactory) {
+  let consecutiveFails = 0;
+  for (const iterCount of sweep) {
+    if (consecutiveFails >= 2) {
+      for (let r = 1; r <= RUNS_PER_POINT; r++) {
+        const ts = new Date().toISOString();
+        logger.write(`"${ts}","${algo}","${impl}",${n},${iterCount},${r},"SKIPPED","","",0.0000`);
+      }
+      continue;
     }
 
-    // Em caso de erro, escreve a mensagem na coluna de Ciclos_CPU e deixa Ciclos_por_iter vazia
-    logger.write(
-      `"${timestamp}","${algo}","${impl}",${n},${iterations},"${errorMsg}","",""`
-    );
+    let fails = 0;
+    for (let r = 1; r <= RUNS_PER_POINT; r++) {
+      const status = runSingle(logger, algo, impl, n, iterCount, r, funcFactory());
+      if (status === "TIMEOUT" || status === "STACK OVERFLOW" || status === "OOM (RAM Excedida)") {
+        fails++;
+        if (fails >= 2 && r < RUNS_PER_POINT) {
+          for (let skip = r + 1; skip <= RUNS_PER_POINT; skip++) {
+            const ts = new Date().toISOString();
+            logger.write(`"${ts}","${algo}","${impl}",${n},${iterCount},${skip},"SKIPPED","","",0.0000`);
+          }
+          break;
+        }
+      }
+    }
+    if (fails >= Math.ceil(RUNS_PER_POINT / 2)) consecutiveFails++;
+    else consecutiveFails = 0;
   }
 }
 
@@ -176,33 +224,21 @@ function runBench(logger, algo, impl, n, iterations, func) {
 const logger = new BenchLogger();
 logger.start();
 
-// ----------------------------------------------------------
-// TESTE 1 — Algorithm 1: Factorial with accumulator
-// ----------------------------------------------------------
-// n=10, 500.000 iterações (sem bignum)
-runBench(logger, "Factorial", "Normal", 10, 500_000, () => factorialNormal(10n));
-runBench(logger, "Factorial", "Loop/Tail", 10, 500_000, () => factorialTail(10n));
+// ----- Factorial -----
+runSweep(logger, "Factorial", "Normal",    10,   SWEEP_CHEAP,            () => () => factorialNormal(10n));
+runSweep(logger, "Factorial", "Loop/Tail", 10,   SWEEP_CHEAP,            () => () => factorialTail(10n));
+runSweep(logger, "Factorial", "Normal",    1000, SWEEP_FACTORIAL_BIGNUM, () => () => factorialNormal(1000n));
+runSweep(logger, "Factorial", "Loop/Tail", 1000, SWEEP_FACTORIAL_BIGNUM, () => () => factorialTail(1000n));
 
-// n=1000, 10.000 iterações (com bignum)
-// Passamos o N como string/número na assinatura para o CSV, mas o BigInt vai na closure
-runBench(logger, "Factorial", "Normal", 1000, 10_000, () => factorialNormal(1000n));
-runBench(logger, "Factorial", "Loop/Tail", 1000, 10_000, () => factorialTail(1000n));
+// ----- Mutually Recursive -----
+runSweep(logger, "Mutually Rec (Even)", "Normal", 1000, SWEEP_CHEAP, () => () => evenNormal(1000));
+runSweep(logger, "Mutually Rec (Even)", "Loop",   1000, SWEEP_CHEAP, () => () => isEvenLoop(1000));
 
-// ----------------------------------------------------------
-// TESTE 2 — Algorithm 2: Mutually recursive even/odd
-// ----------------------------------------------------------
-// n=1000, 500.000 iterações
-runBench(logger, "Mutually Rec (Even)", "Normal", 1000, 500_000, () => evenNormal(1_000));
-runBench(logger, "Mutually Rec (Even)", "Loop", 1000, 500_000, () => isEvenLoop(1_000));
+runSweep(logger, "Mutually Rec (Odd)", "Normal", 1000, SWEEP_CHEAP, () => () => oddNormal(1000));
+runSweep(logger, "Mutually Rec (Odd)", "Loop",   1000, SWEEP_CHEAP, () => () => isEvenLoop(1000));
 
-runBench(logger, "Mutually Rec (Odd)", "Normal", 1000, 500_000, () => oddNormal(1_000));
-runBench(logger, "Mutually Rec (Odd)", "Loop", 1000, 500_000, () => isEvenLoop(1_000));
-
-// ----------------------------------------------------------
-// TESTE 3 — Algorithm 3: Three-state machine A→B→C→A
-// ----------------------------------------------------------
-// k=999 (múltiplo de 3), 500.000 iterações
-runBench(logger, "State Machine", "Normal", 999, 500_000, () => stateANormal(999));
-runBench(logger, "State Machine", "Loop", 999, 500_000, () => stateALoop(999));
+// ----- State Machine -----
+runSweep(logger, "State Machine", "Normal", 999, SWEEP_CHEAP, () => () => stateANormal(999));
+runSweep(logger, "State Machine", "Loop",   999, SWEEP_CHEAP, () => () => stateALoop(999));
 
 logger.close();

@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "description": "Configuracao compartilhada do experimento de benchmark. Documenta o sweep de iteracoes e a seed usada em todas as linguagens para reprodutibilidade.",
+  "seed": 42,
+  "runs_per_point": 10,
+  "max_time_sec_per_measurement": 60,
+  "iteration_sweeps": {
+    "cheap": [10000, 30000, 100000, 300000, 1000000],
+    "factorial_bignum": [200, 500, 1000, 3000, 10000]
+  },
+  "experiments": [
+    { "algoritmo": "Factorial",           "implementacoes": ["Normal", "Loop/Tail"],         "N": 10,   "sweep": "cheap" },
+    { "algoritmo": "Factorial",           "implementacoes": ["Normal", "Loop/Tail"],         "N": 1000, "sweep": "factorial_bignum" },
+    { "algoritmo": "Mutually Rec (Even)", "implementacoes": ["Normal", "Loop"],              "N": 1000, "sweep": "cheap" },
+    { "algoritmo": "Mutually Rec (Odd)",  "implementacoes": ["Normal", "Loop"],              "N": 1000, "sweep": "cheap" },
+    { "algoritmo": "State Machine",       "implementacoes": ["Normal", "Loop"],              "N": 999,  "sweep": "cheap" }
+  ],
+  "csv_schema": ["Data", "Algoritmo", "Implementacao", "N", "Iteracoes", "Run", "Ciclos_CPU", "Ciclos_por_iter", "Memoria_KB", "Freq_GHz"]
+}

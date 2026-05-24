@@ -1,9 +1,15 @@
-version: '3.8'
 services:
   benchmark-env:
     build: .
     volumes:
       # Sincroniza a SUA pasta atual inteira com a pasta /app do Docker.
-      # Assim, os CSVs soltos e as imagens geradas na "analysis univariate plot" 
+      # Assim, os CSVs soltos e as imagens geradas na "analysis univariate plot"
       # vão aparecer magicamente no seu computador.
       - ./:/app
+      # Volume anônimo para preservar o node_modules instalado no build
+      # (sem isso, o bind-mount acima esconderia o node_modules).
+      - /app/node_modules
+      # Expõe o /sys do host para que psutil.cpu_freq() consiga ler a frequência
+      # real da CPU via /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq.
+      # Sem isso, o psutil pode retornar None dentro do container.
+      - /sys:/sys:ro

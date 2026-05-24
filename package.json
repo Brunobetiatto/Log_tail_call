@@ -1,0 +1,9 @@
+{
+  "name": "tcc-bench",
+  "version": "1.0.0",
+  "description": "Benchmarks de tail call para o TCC",
+  "private": true,
+  "dependencies": {
+    "seedrandom": "^3.0.5"
+  }
+}

@@ -2,13 +2,14 @@
 # Rodar com: elixir bench.exs
 
 # ============================================================
+# REPRODUTIBILIDADE
+# ============================================================
+:rand.seed(:exsplus, {42, 42, 42})
+
+# ============================================================
 # CPU FREQUENCY READER
 # ============================================================
 defmodule CpuFreq do
-  @doc """
-  Retorna a frequência da CPU em GHz.
-  Lê de /proc/cpuinfo no Linux ou via sysctl no macOS.
-  """
   def get_ghz do
     case read_linux() do
       nil -> read_macos()
@@ -47,7 +48,7 @@ defmodule CpuFreq do
         |> Integer.parse()
         |> case do
           {hz, _} -> hz / 1.0e9
-          :error   -> 2.5   # fallback razoável se falhar tudo
+          :error   -> 2.5
         end
       _ ->
         2.5
@@ -56,12 +57,12 @@ defmodule CpuFreq do
 end
 
 # ============================================================
-# LOGGER (Formato CSV — mesmo schema do Python)
+# LOGGER
 # ============================================================
 defmodule BenchLogger do
   def start do
     {:ok, file} = File.open("bench_results_elixir.csv", [:write, :utf8])
-    write(file, "Data,Algoritmo,Implementacao,N,Iteracoes,Ciclos_CPU,Ciclos_por_iter,Memoria_KB")
+    write(file, "Data,Algoritmo,Implementacao,N,Iteracoes,Run,Ciclos_CPU,Ciclos_por_iter,Memoria_KB,Freq_GHz")
     file
   end
 
@@ -77,7 +78,7 @@ defmodule BenchLogger do
 end
 
 # ============================================================
-# Algorithm 1 — Factorial with accumulator (self-tail)
+# Algorithm 1 -- Factorial
 # ============================================================
 defmodule Factorial do
   def normal(0), do: 1
@@ -89,7 +90,7 @@ defmodule Factorial do
 end
 
 # ============================================================
-# Algorithm 2 — Mutually recursive even/odd
+# Algorithm 2 -- Mutually recursive even/odd
 # ============================================================
 defmodule EvenOdd do
   def even_normal(0), do: true
@@ -106,7 +107,7 @@ defmodule EvenOdd do
 end
 
 # ============================================================
-# Algorithm 3 — Three-state machine (A → B → C → A)
+# Algorithm 3 -- Three-state machine
 # ============================================================
 defmodule StateMachine do
   def state_a_normal(0), do: :finished
@@ -132,41 +133,92 @@ end
 # BENCHMARK ENGINE
 # ============================================================
 defmodule Bench do
-  @doc """
-  Mede ciclos de CPU usando :erlang.statistics(:runtime), que retorna
-  tempo de CPU do processo em ms — equivalente ao time.process_time() do Python.
-  Ciclos = cpu_ms / 1000 * freq_ghz * 1e9
-  """
-  def run(file, algo, impl, n, iterations, freq_ghz, func) do
+  @max_time_sec   60
+  @runs_per_point (if System.get_env("BENCH_QUICK") == "1", do: 2, else: 10)
+
+  def run_single(file, algo, impl, n, iterations, run_id, freq_ghz, func) do
     :erlang.garbage_collect()
-
-    # Memória antes (heap do processo em bytes)
     heap_before = heap_bytes()
-
-    # Reseta o diff de CPU time — próxima chamada retornará o delta
     :erlang.statistics(:runtime)
-
-    Enum.each(1..iterations, fn _ -> func.() end)
-
-    # {Total_ms, Diff_ms_since_last_call}
-    {_, cpu_diff_ms} = :erlang.statistics(:runtime)
-
-    heap_after = heap_bytes()
-
-    # Conversão: ms de CPU → ciclos (mesma fórmula do Python)
-    cpu_seconds  = cpu_diff_ms / 1000.0
-    cycles_total = cpu_seconds * freq_ghz * 1.0e9
-    cycles_per_iter = if iterations > 0, do: cycles_total / iterations, else: 0.0
-
-    mem_kb = max((heap_after - heap_before) / 1024.0, 0.0)
 
     timestamp = DateTime.utc_now() |> DateTime.to_string()
 
-    # 1. Cria a string formatada de forma simples e limpa
-    line = "\"#{timestamp}\",\"#{algo}\",\"#{impl}\",#{n},#{iterations},#{round(cycles_total)},#{Float.round(cycles_per_iter * 1.0, 2)},#{Float.round(mem_kb * 1.0, 1)}"
+    # Executa em uma task com timeout
+    task = Task.async(fn ->
+      try do
+        Enum.each(1..iterations, fn _ -> func.() end)
+        :ok
+      catch
+        :error, :system_limit -> {:error, "STACK OVERFLOW"}
+        kind, reason          -> {:error, "ERRO: #{inspect({kind, reason})}"}
+      end
+    end)
 
-    # 2. Envia para o seu Logger (que já salva no arquivo e imprime na tela)
-    BenchLogger.write(file, line)
+    case Task.yield(task, @max_time_sec * 1000) || Task.shutdown(task, :brutal_kill) do
+      {:ok, :ok} ->
+        {_, cpu_diff_ms} = :erlang.statistics(:runtime)
+        heap_after = heap_bytes()
+        cpu_seconds  = cpu_diff_ms / 1000.0
+        cycles_total = cpu_seconds * freq_ghz * 1.0e9
+        cycles_per_iter = if iterations > 0, do: cycles_total / iterations, else: 0.0
+        mem_kb = max((heap_after - heap_before) / 1024.0, 0.0)
+
+        line = "\"#{timestamp}\",\"#{algo}\",\"#{impl}\",#{n},#{iterations},#{run_id},#{round(cycles_total)},#{Float.round(cycles_per_iter * 1.0, 2)},#{Float.round(mem_kb * 1.0, 1)},#{Float.round(freq_ghz, 4)}"
+        BenchLogger.write(file, line)
+        :ok
+
+      {:ok, {:error, reason}} ->
+        line = "\"#{timestamp}\",\"#{algo}\",\"#{impl}\",#{n},#{iterations},#{run_id},\"#{reason}\",\"\",\"\",#{Float.round(freq_ghz, 4)}"
+        BenchLogger.write(file, line)
+        reason
+
+      nil ->
+        line = "\"#{timestamp}\",\"#{algo}\",\"#{impl}\",#{n},#{iterations},#{run_id},\"TIMEOUT\",\"\",\"\",#{Float.round(freq_ghz, 4)}"
+        BenchLogger.write(file, line)
+        "TIMEOUT"
+    end
+  end
+
+  def run_sweep(file, algo, impl, n, sweep, freq_ghz, func) do
+    Enum.reduce(sweep, 0, fn iter_count, consecutive_fails ->
+      if consecutive_fails >= 2 do
+        Enum.each(1..@runs_per_point, fn r ->
+          ts = DateTime.utc_now() |> DateTime.to_string()
+          line = "\"#{ts}\",\"#{algo}\",\"#{impl}\",#{n},#{iter_count},#{r},\"SKIPPED\",\"\",\"\",0.0000"
+          BenchLogger.write(file, line)
+        end)
+        consecutive_fails
+      else
+        fails = run_point(file, algo, impl, n, iter_count, freq_ghz, func)
+        if fails >= div(@runs_per_point, 2) + rem(@runs_per_point, 2) do
+          consecutive_fails + 1
+        else
+          0
+        end
+      end
+    end)
+  end
+
+  defp run_point(file, algo, impl, n, iter_count, freq_ghz, func) do
+    Enum.reduce_while(1..@runs_per_point, {0, 1}, fn r, {fails, _} ->
+      status = run_single(file, algo, impl, n, iter_count, r, freq_ghz, func)
+      new_fails = if status in ["TIMEOUT", "STACK OVERFLOW"], do: fails + 1, else: fails
+
+      cond do
+        new_fails >= 2 and r < @runs_per_point ->
+          Enum.each((r + 1)..@runs_per_point, fn skip ->
+            ts = DateTime.utc_now() |> DateTime.to_string()
+            line = "\"#{ts}\",\"#{algo}\",\"#{impl}\",#{n},#{iter_count},#{skip},\"SKIPPED\",\"\",\"\",0.0000"
+            BenchLogger.write(file, line)
+          end)
+          {:halt, {new_fails, r}}
+        true ->
+          {:cont, {new_fails, r}}
+      end
+    end)
+    |> case do
+      {fails, _} -> fails
+    end
   end
 
   defp heap_bytes do
@@ -179,30 +231,33 @@ end
 # MAIN
 # ============================================================
 freq_ghz = CpuFreq.get_ghz()
-IO.puts("Frequência da CPU detectada: #{:erlang.float_to_binary(freq_ghz, decimals: 3)} GHz\n")
+IO.puts("Frequencia da CPU detectada: #{:erlang.float_to_binary(freq_ghz, decimals: 3)} GHz\n")
 
 file = BenchLogger.start()
 
-# ----------------------------------------------------------
-# TESTE 1 — Factorial
-# ----------------------------------------------------------
-Bench.run(file, "Factorial", "Normal",     10,    500_000, freq_ghz, fn -> Factorial.normal(10) end)
-Bench.run(file, "Factorial", "Tail (acc)", 10,    500_000, freq_ghz, fn -> Factorial.tail(10) end)
-Bench.run(file, "Factorial", "Normal",     1_000,  10_000, freq_ghz, fn -> Factorial.normal(1_000) end)
-Bench.run(file, "Factorial", "Tail (acc)", 1_000,  10_000, freq_ghz, fn -> Factorial.tail(1_000) end)
+quick = System.get_env("BENCH_QUICK") == "1"
+{sweep_cheap, sweep_fact_bign} =
+  if quick do
+    IO.puts("[BENCH_QUICK=1] usando sweep reduzido e 2 runs por ponto")
+    {[10_000, 100_000], [200, 1_000]}
+  else
+    {[10_000, 30_000, 100_000, 300_000, 1_000_000], [200, 500, 1_000, 3_000, 10_000]}
+  end
 
-# ----------------------------------------------------------
-# TESTE 2 — Mutually recursive even/odd
-# ----------------------------------------------------------
-Bench.run(file, "Mutually Rec (Even)", "Normal", 1_000, 500_000, freq_ghz, fn -> EvenOdd.even_normal(1_000) end)
-Bench.run(file, "Mutually Rec (Even)", "Tail",   1_000, 500_000, freq_ghz, fn -> EvenOdd.is_even(1_000) end)
-Bench.run(file, "Mutually Rec (Odd)",  "Normal", 1_000, 500_000, freq_ghz, fn -> EvenOdd.odd_normal(1_000) end)
-Bench.run(file, "Mutually Rec (Odd)",  "Tail",   1_000, 500_000, freq_ghz, fn -> EvenOdd.is_odd(1_000) end)
+# ----- Factorial -----
+Bench.run_sweep(file, "Factorial", "Normal",     10,    sweep_cheap,     freq_ghz, fn -> Factorial.normal(10) end)
+Bench.run_sweep(file, "Factorial", "Tail (acc)", 10,    sweep_cheap,     freq_ghz, fn -> Factorial.tail(10) end)
+Bench.run_sweep(file, "Factorial", "Normal",     1_000, sweep_fact_bign, freq_ghz, fn -> Factorial.normal(1_000) end)
+Bench.run_sweep(file, "Factorial", "Tail (acc)", 1_000, sweep_fact_bign, freq_ghz, fn -> Factorial.tail(1_000) end)
 
-# ----------------------------------------------------------
-# TESTE 3 — Three-state machine
-# ----------------------------------------------------------
-Bench.run(file, "State Machine", "Normal", 999, 500_000, freq_ghz, fn -> StateMachine.state_a_normal(999) end)
-Bench.run(file, "State Machine", "Tail",   999, 500_000, freq_ghz, fn -> StateMachine.state_a(999) end)
+# ----- Mutually Recursive -----
+Bench.run_sweep(file, "Mutually Rec (Even)", "Normal", 1_000, sweep_cheap, freq_ghz, fn -> EvenOdd.even_normal(1_000) end)
+Bench.run_sweep(file, "Mutually Rec (Even)", "Tail",   1_000, sweep_cheap, freq_ghz, fn -> EvenOdd.is_even(1_000) end)
+Bench.run_sweep(file, "Mutually Rec (Odd)",  "Normal", 1_000, sweep_cheap, freq_ghz, fn -> EvenOdd.odd_normal(1_000) end)
+Bench.run_sweep(file, "Mutually Rec (Odd)",  "Tail",   1_000, sweep_cheap, freq_ghz, fn -> EvenOdd.is_odd(1_000) end)
+
+# ----- State Machine -----
+Bench.run_sweep(file, "State Machine", "Normal", 999, sweep_cheap, freq_ghz, fn -> StateMachine.state_a_normal(999) end)
+Bench.run_sweep(file, "State Machine", "Tail",   999, sweep_cheap, freq_ghz, fn -> StateMachine.state_a(999) end)
 
 BenchLogger.close(file)
