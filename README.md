@@ -19,6 +19,20 @@ Cada algoritmo é implementado em duas (ou três) variantes: a versão recursiva
 direta (Normal) e a versão otimizada (Tail-call / Loop), permitindo comparação
 controlada do comportamento de pilha e custo de CPU entre os runtimes.
 
+Obeservações
+-------------------------
+Nem todas as linguagens aparecem em todas as categorias dos
+gráficos. Node.js aparece principalmente como Normal e Loop, pois o ambiente
+Node/V8 não oferece suporte confiável a proper tail calls em JavaScript comum.
+OCaml, Scheme/Racket e Elixir aparecem principalmente como Normal e Tail-call,
+pois nessas linguagens a repetição funcional é frequentemente representada por
+recursão de cauda. A ausência de uma linguagem no painel Loop indica ausência
+de uma implementação Loop separada no benchmark, não ausência de capacidade de
+repetição na linguagem.
+
+Nos gráficos de crescimento, Python foi excluído para evitar distorções por
+timeout, stack overflow e limitações práticas de recursão.
+
 ESTRUTURA DO REPOSITÓRIO
 -------------------------
 
@@ -57,10 +71,9 @@ ESTRUTURA DO REPOSITÓRIO
                     Saída: bench_results_ocaml.csv
 
     test.rb       – Script Ruby. Implementa os 3 algoritmos nas variantes Normal,
-                    Tail (TCO) e Loop explícito. Ativa o TCO em tempo de compilação
-                    via RubyVM::InstructionSequence.compile_option.
-                    Execução: ruby languages/test.rb
-                    Saída: bench_results_ruby.csv
+                  Tail (TCO) e Loop explícito. Ativa o TCO em tempo de compilação
+                  via RubyVM::InstructionSequence.compile_option.
+                  A versão Loop inclui Fatorial, Recursão Mútua e Máquina de Estados.
 
     test_ocaml    – Binário OCaml pré-compilado (Linux x86-64). Pode ser executado
                     diretamente sem recompilação: ./languages/test_ocaml
@@ -72,8 +85,9 @@ ESTRUTURA DO REPOSITÓRIO
 
 ./bench_results/
     Datasets CSV produzidos pelos scripts de benchmark. Todos os arquivos
-    seguem o schema:
-      Data, Algoritmo, Implementacao, N, Iteracoes, Tempo_ms, Memoria_KB
+    seguem o schema atual:
+      Data, Algoritmo, Implementacao, N, Iteracoes, Run, Ciclos_CPU,
+      Ciclos_por_iter, Memoria_KB, Freq_GHz
 
     bench_results_python.csv  – Resultados das execuções em CPython 3
     bench_results_node.csv    – Resultados das execuções em Node.js (V8)
@@ -83,8 +97,9 @@ ESTRUTURA DO REPOSITÓRIO
     bench_results_ruby.csv    – Resultados das execuções em Ruby
 
     Cada linha corresponde a uma medição de (algoritmo, implementação, N,
-    contagem de iterações). Linhas podem conter "STACK OVERFLOW" ou "TIMEOUT"
-    na coluna Tempo_ms quando uma execução excedeu os limites de segurança.
+    contagem de iterações). Linhas podem conter "STACK OVERFLOW", "TIMEOUT" ou "SKIPPED"
+    na coluna Ciclos_CPU quando uma execução excedeu os limites de segurança
+    ou foi ignorada após falhas consecutivas.
 
 
 ./outputs/
@@ -105,6 +120,24 @@ ESTRUTURA DO REPOSITÓRIO
     benchmark_comparativo.png – Visão comparativa geral (tempo, memória,
                                 escalabilidade) em uma única figura multi-painel.
 
+    growth_Factorial_N10.png       – Crescimento do Fatorial com N=10,
+                                  em ciclos de CPU vs. iterações.
+
+    growth_Factorial_N1000.png     – Crescimento do Fatorial com N=1000,
+                                      em ciclos de CPU vs. iterações.
+    
+    growth_Mutually_Rec_Even.png   – Crescimento da recursão mútua Even,
+                                      em ciclos de CPU vs. iterações.
+    
+    growth_Mutually_Rec_Odd.png    – Crescimento da recursão mútua Odd,
+                                      em ciclos de CPU vs. iterações.
+    
+    growth_State_Machine.png       – Crescimento da máquina de estados,
+                                      em ciclos de CPU vs. iterações.
+    
+    growth_all_algorithms.png      – Figura combinada com todos os gráficos
+                                      de crescimento.
+
 
 ./analysis/
     Scripts Python de análise e geração de gráficos. Leem os CSVs de
@@ -116,10 +149,12 @@ ESTRUTURA DO REPOSITÓRIO
                                 (executar a partir da raiz do repositório)
 
     bench_growth_charts.py    – Gera gráficos de crescimento log-log
-                                (ciclos de CPU vs. iterações) por algoritmo e
-                                uma figura combinada 3×2.
-                                Execução: python3 analysis/bench_growth_charts.py
-                                Saída: outputs/growth_*.png
+                              (ciclos de CPU vs. iterações) por algoritmo,
+                              separados por implementação: Normal, Tail-call
+                              e Loop. Também gera uma figura combinada com
+                              todos os algoritmos.
+                              Execução: python3 analysis/bench_growth_charts.py
+                              Saída: outputs/growth_*.png
 
 
 ./latex/
@@ -170,6 +205,13 @@ COMO REPRODUZIR OS RESULTADOS
   -------------------------------------------------
     docker compose up --build
     Os CSVs e figuras são gravados automaticamente na pasta do projeto.
+
+    Também é possível executar explicitamente:
+      docker compose run --rm benchmark-env bash run.sh
+        Versão completa do benchmark.
+
+      docker compose run --rm benchmark-env bash run_quick.sh
+        Versão rápida para validação do pipeline.
 
   Opção B – Execução nativa
   --------------------------
