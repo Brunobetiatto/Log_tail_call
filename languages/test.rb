@@ -127,6 +127,15 @@ def is_even_loop(n)
   end
 end
 
+def is_odd_loop(n)
+  while true
+    return false if n == 0
+    n -= 1
+    return true if n == 0
+    n -= 1
+  end
+end
+
 # ============================================================
 # Algorithm 3 -- Three-state machine
 # ============================================================
@@ -271,6 +280,7 @@ run_sweep(logger, "Mutually Rec (Even)", "Loop",       1000, SWEEP_CHEAP) { is_e
 
 run_sweep(logger, "Mutually Rec (Odd)", "Normal",     1000, SWEEP_CHEAP) { odd_normal(1000) }
 run_sweep(logger, "Mutually Rec (Odd)", "Tail (TCO)", 1000, SWEEP_CHEAP) { is_odd(1000) }
+run_sweep(logger, "Mutually Rec (Odd)", "Loop",       1000, SWEEP_CHEAP) { is_odd_loop(1000) }
 
 # ----- State Machine -----
 run_sweep(logger, "State Machine", "Normal",     999, SWEEP_CHEAP) { state_a_normal(999) }
