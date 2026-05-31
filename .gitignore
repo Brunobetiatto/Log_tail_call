@@ -6,6 +6,11 @@
 *.cmi
 *.cmx
 *.cmo
+*.a
+*.cmxa
+*.annot
+*.byte
+*.native
 languages/test_ocaml
 languages/test.pdf
 
@@ -15,19 +20,24 @@ node_modules/
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
 
-# Resultados (gerados, não versionados)
-bench_results_*.csv
-bench_results/
-outputs/*.png
-benchmark_comparativo.png
-analysis univariate plot/
-
-# Charts antigos (substituídos por bench_growth_charts.py)
-outputs/bench_charts*.py
+# VS Code
+.vscode/
 
 # LaTeX
-.aux
+*.aux
+*.log
+*.out
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.bbl
+*.blg
+*.run.xml
+*.bcf
 latex/test.log
 latex/test.out
 latex/test.fls

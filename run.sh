@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e # Para o script se algo der erro
+set -e
 
 echo "=== Iniciando execução dos benchmarks ==="
 echo "Sweep de iterações em escala log, 10 runs por ponto, seed=42"
@@ -16,9 +16,6 @@ elixir languages/test.exs
 echo "--- Node.js ---"
 node languages/test.js
 
-echo "--- Python ---"
-python3 -u languages/test.py
-
 echo "--- Ruby ---"
 ruby languages/test.rb
 
@@ -27,14 +24,21 @@ echo "--- OCaml ---"
 ocamlopt -o languages/test_ocaml unix.cmxa languages/test.ml
 ./languages/test_ocaml
 
-# 3. Gera os gráficos comparativos
+# 3. Move os CSVs gerados para bench_results/
+echo ""
+echo "=== Movendo CSVs para bench_results/ ==="
+for f in bench_results_*.csv; do
+    [ -f "$f" ] && mv "$f" bench_results/ && echo "  movido: $f"
+done
+
+# 4. Gera os gráficos
 echo ""
 echo "=== Gerando gráficos ==="
 mkdir -p outputs
-
 python3 -u analysis/bench_charts.py
 python3 -u analysis/bench_growth_charts.py
 
 echo ""
 echo "=== Benchmarks e gráficos gerados com sucesso! ==="
+echo "CSVs em: bench_results/"
 echo "PNGs em: outputs/"

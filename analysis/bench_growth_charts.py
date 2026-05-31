@@ -1,28 +1,11 @@
 """
-Gerador de graficos de crescimento.
+Gerador de graficos de crescimento — subplots por implementacao.
 
-Para cada algoritmo, gera um grafico mostrando como o numero de ciclos de
-CPU (Y) cresce com o numero de iteracoes (X), uma linha por (linguagem x
-implementacao). Cada ponto = media de N runs (barras de erro = desvio padrao).
-
-- Eixo X (iteracoes): log
-- Eixo Y (ciclos de CPU): log
-- Eixo Y secundario (direita): tempo em ns, usando a mediana da Freq_GHz medida
-- Legenda lateral compacta: bloco \"Linguagem\" (cor) + bloco \"Implementacao\" (estilo)
-
-Fatorial: dois arquivos separados (N=10 e N=1000) ja que as escalas diferem
-3+ ordens de grandeza.
-
-Saida:
-    outputs/growth_Factorial_N10.png
-    outputs/growth_Factorial_N1000.png
-    outputs/growth_Mutually_Rec_Even.png
-    outputs/growth_Mutually_Rec_Odd.png
-    outputs/growth_State_Machine.png
-    outputs/growth_all_algorithms.png  (montagem 3x2)
+Cada imagem tem 3 subplots lado a lado (Normal | Tail-call | Loop).
+Eixo Y compartilhado entre os 3 subplots.
+Python excluido dos graficos.
 """
 
-import os
 import sys
 import numpy as np
 import pandas as pd
@@ -31,17 +14,15 @@ import matplotlib.lines as mlines
 import seaborn as sns
 from pathlib import Path
 
-# ----------------------------------------------------------------------------
-HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent if HERE.name == "outputs" else HERE
+HERE    = Path(__file__).resolve().parent
+ROOT    = HERE.parent
 OUT_DIR = ROOT / "outputs"
 OUT_DIR.mkdir(exist_ok=True)
 
-LANGS = ['ocaml', 'python', 'ruby', 'scheme', 'elixir', 'node']
+LANGS = ['ocaml', 'ruby', 'scheme', 'elixir', 'node']
 
 LANG_DISPLAY = {
     'ocaml':  'OCaml',
-    'python': 'Python',
     'ruby':   'Ruby',
     'scheme': 'Scheme',
     'elixir': 'Elixir',
@@ -54,31 +35,21 @@ LANG_PALETTE = {
     'Elixir':  '#7B5EA7',
     'Scheme':  '#3D7EBF',
     'Ruby':    '#CC342D',
-    'Python':  '#306998',
 }
 
-# Estilo por categoria de implementacao
-IMPL_STYLE = {
-    'normal': {'linestyle': '-',  'marker': 'o'},  # Recursiva direta
-    'tail':   {'linestyle': ':',  'marker': '^'},  # Tail-call (TCO ou tail-acc)
-    'loop':   {'linestyle': '--', 'marker': 's'},  # Loop explicito
-}
-IMPL_LABEL = {
+IMPL_CATEGORIES = ['normal', 'tail', 'loop']
+
+IMPL_TITLES = {
     'normal': 'Normal (recursiva)',
     'tail':   'Tail-call',
     'loop':   'Loop',
 }
 
-def impl_category(impl_name: str) -> str:
-    s = str(impl_name).lower()
-    if 'normal' in s:
-        return 'normal'
-    if 'tail' in s or 'tco' in s:
-        # Loop/Tail (do Node) e' loop explicito, nao TCO
-        if 'loop' in s:
-            return 'loop'
-        return 'tail'
-    return 'loop'
+IMPL_STYLE = {
+    'normal': {'linestyle': '-',  'marker': 'o'},
+    'tail':   {'linestyle': ':',  'marker': '^'},
+    'loop':   {'linestyle': '--', 'marker': 's'},
+}
 
 ALGO_TITLES = {
     'Factorial':            'Fatorial',
@@ -87,24 +58,34 @@ ALGO_TITLES = {
     'State Machine':        'Maquina de Estados',
 }
 
-# ----------------------------------------------------------------------------
+def impl_category(impl_name: str) -> str:
+    s = str(impl_name).lower()
+    if 'normal' in s:
+        return 'normal'
+    if 'tail' in s or 'tco' in s:
+        if 'loop' in s:
+            return 'loop'
+        return 'tail'
+    return 'loop'
+
+# ── Load ─────────────────────────────────────────────────────────────────────
 def load_all() -> pd.DataFrame:
     frames = []
     for lang in LANGS:
-        path = ROOT / f"bench_results_{lang}.csv"
+        path = ROOT / 'bench_results' / f'bench_results_{lang}.csv'
         if not path.exists():
-            print(f"[aviso] arquivo nao encontrado: {path}")
+            print(f"[aviso] nao encontrado: {path}")
             continue
         try:
             df = pd.read_csv(path)
         except Exception as e:
-            print(f"[erro] falha ao ler {path}: {e}")
+            print(f"[erro] {path}: {e}")
             continue
         df['Linguagem'] = LANG_DISPLAY[lang]
         frames.append(df)
 
     if not frames:
-        print("[fatal] nenhum CSV encontrado. Rode os benchmarks primeiro.")
+        print("[fatal] nenhum CSV encontrado.")
         sys.exit(1)
 
     combined = pd.concat(frames, ignore_index=True)
@@ -113,151 +94,189 @@ def load_all() -> pd.DataFrame:
     if 'Freq_GHz' not in combined.columns:
         combined['Freq_GHz'] = np.nan
 
-    combined['Ciclos_CPU']      = pd.to_numeric(combined['Ciclos_CPU'], errors='coerce')
-    combined['Ciclos_por_iter'] = pd.to_numeric(combined['Ciclos_por_iter'], errors='coerce')
-    combined['Freq_GHz']        = pd.to_numeric(combined['Freq_GHz'], errors='coerce')
-    combined['Iteracoes']       = pd.to_numeric(combined['Iteracoes'], errors='coerce')
-    combined['Memoria_KB']      = pd.to_numeric(combined['Memoria_KB'], errors='coerce').clip(lower=0)
+    # Compatibilidade: CSVs novos (Ciclos_CPU) e antigos (Tempo_ms)
+    if 'Ciclos_CPU' not in combined.columns and 'Tempo_ms' in combined.columns:
+        freq_est = 2.0
+        combined['Ciclos_CPU']      = pd.to_numeric(combined['Tempo_ms'], errors='coerce') / 1000.0 * freq_est * 1e9
+        combined['Ciclos_por_iter'] = combined['Ciclos_CPU'] / pd.to_numeric(combined['Iteracoes'], errors='coerce')
+        combined['Freq_GHz']        = freq_est
+        print("[aviso] CSVs com schema antigo (Tempo_ms) — convertendo para ciclos estimados")
+    else:
+        combined['Ciclos_CPU']      = pd.to_numeric(combined['Ciclos_CPU'],      errors='coerce')
+        combined['Ciclos_por_iter'] = pd.to_numeric(combined['Ciclos_por_iter'], errors='coerce')
+        combined['Freq_GHz']        = pd.to_numeric(combined['Freq_GHz'],        errors='coerce')
 
-    valid = combined.dropna(subset=['Ciclos_CPU', 'Iteracoes']).copy()
-    return valid
+    combined['Iteracoes']  = pd.to_numeric(combined['Iteracoes'],  errors='coerce')
+    combined['Memoria_KB'] = pd.to_numeric(combined['Memoria_KB'], errors='coerce').clip(lower=0)
+    combined['impl_cat']   = combined['Implementacao'].apply(impl_category)
 
-# ----------------------------------------------------------------------------
-def aggregate(df: pd.DataFrame, algo: str, n_filter=None) -> pd.DataFrame:
-    subset = df[df['Algoritmo'] == algo].copy()
+    return combined.dropna(subset=['Ciclos_CPU', 'Iteracoes']).copy()
+
+# ── Aggregate ─────────────────────────────────────────────────────────────────
+def aggregate(df, algo, n_filter=None):
+    sub = df[df['Algoritmo'] == algo].copy()
+
     if n_filter is not None:
-        subset = subset[subset['N'] == n_filter]
-    if subset.empty:
-        return subset
-    grouped = (
-        subset
-        .groupby(['Linguagem', 'Implementacao', 'N', 'Iteracoes'], as_index=False)
-        .agg(
-            ciclos_mean=('Ciclos_CPU', 'mean'),
-            ciclos_std =('Ciclos_CPU', 'std'),
-            n_runs     =('Ciclos_CPU', 'count'),
-        )
+        sub = sub[sub['N'] == n_filter]
+
+    # Remove valores inválidos para escala log
+    sub = sub[
+        (sub['Ciclos_CPU'] > 0) &
+        (sub['Iteracoes'] > 0)
+    ].copy()
+
+    if sub.empty:
+        return sub
+
+    agg = (
+        sub.groupby(['Linguagem', 'impl_cat', 'Iteracoes'], as_index=False)
+           .agg(
+               ciclos_mean=('Ciclos_CPU', 'mean'),
+               ciclos_std =('Ciclos_CPU', 'std'),
+               n_runs     =('Ciclos_CPU', 'count'),
+           )
+           .assign(ciclos_std=lambda d: d['ciclos_std'].fillna(0))
     )
-    grouped['ciclos_std'] = grouped['ciclos_std'].fillna(0.0)
-    return grouped
 
-# ----------------------------------------------------------------------------
-def add_ns_secondary_axis(ax, freq_ghz: float):
-    """Eixo Y secundario (direita) em nanosegundos."""
-    ns_per_cycle = 1.0 / freq_ghz
-    sec = ax.secondary_yaxis('right',
-                              functions=(lambda c: c * ns_per_cycle,
-                                         lambda t: t / ns_per_cycle))
-    sec.set_ylabel(f'Tempo (ns)  -  1 ciclo = {ns_per_cycle:.3f} ns @ {freq_ghz:.3f} GHz',
-                   fontsize=10, color='#444')
-    sec.tick_params(labelsize=9, colors='#444')
-    return sec
+    return agg
 
-def build_compact_legends(ax, langs_used, impls_used, bbox=(1.18, 1.0), fontsize=8.5):
-    """Duas legendas laterais lado a lado: Linguagem (cor) + Implementacao (estilo)."""
-    lang_handles = [
-        mlines.Line2D([], [], color=LANG_PALETTE[l], linewidth=2.5, marker='o',
-                      markersize=5, label=l)
-        for l in langs_used
-    ]
-    impl_handles = [
-        mlines.Line2D([], [], color='#444',
-                      linestyle=IMPL_STYLE[c]['linestyle'],
-                      marker=IMPL_STYLE[c]['marker'],
-                      linewidth=2.0, markersize=5,
-                      label=IMPL_LABEL[c])
-        for c in impls_used
-    ]
-    leg1 = ax.legend(handles=lang_handles, title='Linguagem',
-                     loc='upper left', bbox_to_anchor=bbox,
-                     fontsize=fontsize, title_fontsize=fontsize + 0.5,
-                     frameon=True, framealpha=0.92)
-    ax.add_artist(leg1)
-    ax.legend(handles=impl_handles, title='Implementacao',
-              loc='upper left', bbox_to_anchor=(bbox[0], bbox[1] - 0.45),
-              fontsize=fontsize, title_fontsize=fontsize + 0.5,
-              frameon=True, framealpha=0.92)
+# ── Plot one subplot ──────────────────────────────────────────────────────────
+def plot_impl(ax, agg_df, cat):
+    sub = agg_df[agg_df['impl_cat'] == cat]
+    has_data = False
 
-def plot_algorithm(ax, algo_df: pd.DataFrame, algo_name: str,
-                   freq_ghz: float, runs_per_point: int,
-                   show_legend: bool = True, legend_bbox=(1.18, 1.0)):
-    title = ALGO_TITLES.get(algo_name, algo_name)
-    if algo_df.empty:
-        ax.text(0.5, 0.5, f'Sem dados para {algo_name}',
-                ha='center', va='center', transform=ax.transAxes,
-                fontsize=12, color='gray')
-        ax.set_title(title, fontsize=13, fontweight='bold')
-        return
+    for lang_name, color in LANG_PALETTE.items():
+        rows = sub[sub['Linguagem'] == lang_name].sort_values('Iteracoes')
 
-    langs_used = []
-    impls_used = []
+        # Remove valores inválidos para escala log
+        rows = rows[
+            (rows['Iteracoes'] > 0) &
+            (rows['ciclos_mean'] > 0)
+        ].copy()
 
-    for lang in LANG_PALETTE.keys():
-        for impl in sorted(algo_df['Implementacao'].unique()):
-            sub = algo_df[
-                (algo_df['Linguagem'] == lang) &
-                (algo_df['Implementacao'] == impl)
-            ].sort_values('Iteracoes')
-            if sub.empty:
-                continue
-            cat = impl_category(impl)
-            style = IMPL_STYLE[cat]
-            color = LANG_PALETTE[lang]
+        # Remove pontos duplicados no mesmo X para evitar linha vertical
+        rows = (
+            rows
+            .sort_values(['Iteracoes', 'ciclos_mean'])
+            .drop_duplicates(subset=['Iteracoes'], keep='last')
+        )
 
-            x = sub['Iteracoes'].values
-            y = sub['ciclos_mean'].values
-            yerr = sub['ciclos_std'].values
+        if rows.empty or len(rows) < 2:
+            continue
+        has_data = True
 
-            ax.errorbar(x, y, yerr=yerr,
-                        color=color, ecolor=color,
-                        linewidth=1.8, markersize=5.5, capsize=3,
-                        elinewidth=0.8, alpha=0.92,
-                        linestyle=style['linestyle'],
-                        marker=style['marker'],
-                        zorder=3)
+        x    = rows['Iteracoes'].values
+        y    = rows['ciclos_mean'].values
+        # Só mostra barras de erro se há mais de 1 run
+        yerr = None
 
-            if lang not in langs_used:
-                langs_used.append(lang)
-            if cat not in impls_used:
-                impls_used.append(cat)
+        ax.plot(
+            x, y,
+            color=color,
+            label=lang_name,
+            linewidth=2.4,
+            markersize=7,
+            alpha=0.95,
+            linestyle=IMPL_STYLE[cat]['linestyle'],
+            marker=IMPL_STYLE[cat]['marker'],
+            zorder=3,
+        )
 
     ax.set_xscale('log')
     ax.set_yscale('log')
-    ax.set_xlabel('Numero de iteracoes', fontsize=11)
-    ax.set_ylabel('Ciclos de CPU (media de runs)', fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight='bold')
     ax.grid(True, which='both', alpha=0.3, zorder=1)
+    ax.set_xlabel('Numero de iteracoes', fontsize=10)
+    
+    if not has_data:
+        ax.text(0.5, 0.5, 'Sem dados\npara esta\nimplementacao',
+                ha='center', va='center', transform=ax.transAxes,
+                color='#aaa', fontsize=10, style='italic')
 
-    if freq_ghz and freq_ghz > 0:
-        add_ns_secondary_axis(ax, freq_ghz)
+    return has_data
 
-    if show_legend and langs_used:
-        # Ordena impls por convencao normal -> tail -> loop
-        order = {'normal': 0, 'tail': 1, 'loop': 2}
-        impls_used = sorted(set(impls_used), key=lambda c: order[c])
-        build_compact_legends(ax, langs_used, impls_used, bbox=legend_bbox)
+# ── Save one chart ────────────────────────────────────────────────────────────
+def save_chart(df, algo, freq_ghz, runs_per_point, out_name,
+               n_filter=None, suptitle_extra=""):
 
-# ----------------------------------------------------------------------------
-def save_single_chart(df, algo, freq_ghz, runs_per_point, out_name, n_filter=None,
-                       suptitle_extra=""):
     agg = aggregate(df, algo, n_filter=n_filter)
-    fig, ax = plt.subplots(figsize=(12, 7), facecolor='#fafafa')
-    plot_algorithm(ax, agg, algo, freq_ghz, runs_per_point, show_legend=True)
-
-    sup = f'Crescimento: ciclos de CPU vs iteracoes - {ALGO_TITLES[algo]}'
+    algo_title = ALGO_TITLES.get(algo, algo)
+    sup = f'Crescimento: ciclos de CPU vs iteracoes — {algo_title}'
     if suptitle_extra:
         sup += f'  {suptitle_extra}'
-    fig.suptitle(sup, fontsize=14, fontweight='bold', y=1.0)
-    fig.text(0.01, 0.01,
-             f'Cada ponto: media de {runs_per_point} runs (barras = std). '
-             f'Eixos log. Seed=42. Config em bench_config.json.',
-             fontsize=8, color='#666', style='italic')
-    plt.tight_layout(rect=[0, 0.03, 0.82, 0.97])
+
+    fig, axes = plt.subplots(
+        1, 3,
+        figsize=(19, 6),
+        sharey=False,
+        facecolor='#fafafa',
+    )
+    fig.subplots_adjust(top=0.82, bottom=0.18, left=0.07, right=0.78, wspace=0.1)
+
+    for ax_i, (ax, cat) in enumerate(zip(axes, IMPL_CATEGORIES)):
+        plot_impl(ax, agg, cat)
+        apply_y_zoom(ax, agg, cat, pad_factor=1.7)
+        # Titulo de cada subplot abaixo do titulo geral
+        ax.set_title(IMPL_TITLES[cat], fontsize=12, fontweight='bold', pad=6)
+        if ax_i == 0:
+            ax.set_ylabel('Ciclos de CPU (media de runs)', fontsize=10)
+        else:
+            ax.set_ylabel('')
+            ax.tick_params(labelleft=False)
+
+        # Eixo Y secundario (ns) apenas no ultimo subplot
+        if ax_i == 2 and freq_ghz and freq_ghz > 0:
+            ns = 1.0 / freq_ghz
+            sec = ax.secondary_yaxis(
+                'right',
+                functions=(lambda c, ns=ns: c * ns,
+                           lambda t, ns=ns: t / ns)
+            )
+            sec.set_ylabel(
+                f'Tempo (ns)  —  1 ciclo ≈ {ns:.3f} ns @ {freq_ghz:.2f} GHz',
+                fontsize=8, color='#555'
+            )
+            sec.tick_params(labelsize=8, colors='#555')
+
+    # Legenda fora dos subplots, à direita da figura
+    handles = [
+        mlines.Line2D([], [], color=LANG_PALETTE[l], linewidth=2.5,
+                      marker='o', markersize=6, label=l)
+        for l in LANG_PALETTE
+    ]
+    fig.legend(
+        handles=handles, title='Linguagem',
+        loc='center right',
+        bbox_to_anchor=(0.88, 0.52),
+        fontsize=9, title_fontsize=10,
+        frameon=True, framealpha=0.95,
+    )
+
+    fig.suptitle(sup, fontsize=14, fontweight='bold', y=0.97)
+    fig.text(
+        0.42, 0.04,
+        f'Cada ponto: media de {runs_per_point} runs. '
+        f'Eixo Y compartilhado. Eixos log. Seed=42.',
+        ha='center', fontsize=8, color='#666', style='italic'
+    )
+
     out_path = OUT_DIR / out_name
     plt.savefig(out_path, dpi=160, bbox_inches='tight', facecolor='#fafafa')
     plt.close(fig)
     print(f"  salvo: {out_path}")
 
+def apply_y_zoom(ax, agg_df, cat, pad_factor=1.6):
+    sub = agg_df[agg_df['impl_cat'] == cat]
+    vals = sub['ciclos_mean'].dropna()
+    vals = vals[vals > 0]
+
+    if vals.empty:
+        return
+
+    ymin = vals.min() / pad_factor
+    ymax = vals.max() * pad_factor
+    ax.set_ylim(ymin, ymax)
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     sns.set_theme(style='whitegrid', font_scale=1.0)
     plt.rcParams.update({
@@ -270,90 +289,104 @@ def main():
 
     df = load_all()
     if df.empty:
-        print("[fatal] dataframe vazio apos limpeza")
+        print("[fatal] dataframe vazio")
         return
 
     freq_series = df['Freq_GHz'].dropna()
     freq_series = freq_series[freq_series > 0.1]
     freq_ghz = float(freq_series.median()) if not freq_series.empty else 2.0
-    print(f"Freq mediana detectada: {freq_ghz:.4f} GHz  ->  1 ciclo = {1/freq_ghz:.3f} ns")
+    print(f"Freq mediana: {freq_ghz:.4f} GHz  ->  1 ciclo = {1/freq_ghz:.3f} ns")
 
     runs_per_point = int(
-        df.groupby(['Algoritmo', 'Implementacao', 'N', 'Iteracoes', 'Linguagem'])['Run']
+        df.groupby(['Algoritmo', 'impl_cat', 'N', 'Iteracoes', 'Linguagem'])['Run']
           .nunique().median()
     ) or 10
     print(f"Runs por ponto (mediana): {runs_per_point}")
 
-    # ---------- Figuras individuais ----------
-    # Factorial: 2 arquivos separados (N=10 e N=1000)
-    save_single_chart(df, 'Factorial', freq_ghz, runs_per_point,
-                      'growth_Factorial_N10.png', n_filter=10,
-                      suptitle_extra='(N=10)')
-    save_single_chart(df, 'Factorial', freq_ghz, runs_per_point,
-                      'growth_Factorial_N1000.png', n_filter=1000,
-                      suptitle_extra='(N=1000, bignum)')
-
-    # Demais algoritmos: 1 arquivo cada
+    save_chart(df, 'Factorial', freq_ghz, runs_per_point,
+               'growth_Factorial_N10.png',   n_filter=10,   suptitle_extra='(N=10)')
+    save_chart(df, 'Factorial', freq_ghz, runs_per_point,
+               'growth_Factorial_N1000.png', n_filter=1000, suptitle_extra='(N=1000, bignum)')
     for algo, out_name in [
         ('Mutually Rec (Even)', 'growth_Mutually_Rec_Even.png'),
         ('Mutually Rec (Odd)',  'growth_Mutually_Rec_Odd.png'),
         ('State Machine',       'growth_State_Machine.png'),
     ]:
-        save_single_chart(df, algo, freq_ghz, runs_per_point, out_name)
+        save_chart(df, algo, freq_ghz, runs_per_point, out_name)
 
-    # ---------- Figura combinada (3 linhas x 2 colunas) ----------
-    fig, axes = plt.subplots(3, 2, figsize=(22, 18), facecolor='#fafafa')
-    panels = [
-        ('Factorial',           10,   axes[0, 0]),
-        ('Factorial',           1000, axes[0, 1]),
-        ('Mutually Rec (Even)', None, axes[1, 0]),
-        ('Mutually Rec (Odd)',  None, axes[1, 1]),
-        ('State Machine',       None, axes[2, 0]),
+    # ── Figura combinada 5 x 3 ────────────────────────────────────────────────
+    PANELS = [
+        ('Factorial',           10,   'Fatorial (N=10)'),
+        ('Factorial',           1000, 'Fatorial (N=1000)'),
+        ('Mutually Rec (Even)', None, 'Rec. Mutua (Even)'),
+        ('Mutually Rec (Odd)',  None, 'Rec. Mutua (Odd)'),
+        ('State Machine',       None, 'Maq. de Estados'),
     ]
-    for algo, n_filter, ax in panels:
+
+    fig, axes = plt.subplots(
+    5, 3,
+        figsize=(26, 36),
+        sharey=False,
+        facecolor='#fafafa',
+        )
+    fig.subplots_adjust(
+        top=0.94, bottom=0.05,
+        left=0.08, right=0.86,
+        hspace=0.55, wspace=0.18
+    )
+
+    # Cabecalhos das colunas (uma vez no topo)
+    for col_i, cat in enumerate(IMPL_CATEGORIES):
+        axes[0, col_i].set_title(IMPL_TITLES[cat], fontsize=13,
+                                 fontweight='bold', pad=10)
+
+    for row_i, (algo, n_filter, row_label) in enumerate(PANELS):
         agg = aggregate(df, algo, n_filter=n_filter)
-        plot_algorithm(ax, agg, algo, freq_ghz, runs_per_point,
-                       show_legend=False)
-        if n_filter is not None:
-            ax.set_title(f'{ALGO_TITLES[algo]} (N={n_filter})',
-                         fontsize=13, fontweight='bold')
+        for col_i, cat in enumerate(IMPL_CATEGORIES):
+            ax = axes[row_i, col_i]
+            plot_impl(ax, agg, cat)
+            apply_y_zoom(ax, agg, cat, pad_factor=1.8)
+            if col_i == 0:
+                ax.set_ylabel('Ciclos de CPU', fontsize=9)
+                ax.annotate(
+                    row_label,
+                    xy=(-0.30, 0.5), xycoords='axes fraction',
+                    fontsize=10, fontweight='bold', rotation=90,
+                    va='center', ha='center', color='#333'
+                )
+            else:
+                ax.set_ylabel('')
+                ax.tick_params(labelleft=False)
+            if row_i < 4:
+                ax.set_xlabel('')
 
-    # Painel vazio (axes[2,1]) vira a legenda combinada
-    leg_ax = axes[2, 1]
-    leg_ax.axis('off')
-    all_langs = list(LANG_PALETTE.keys())
-    all_impls = ['normal', 'tail', 'loop']
-    lang_handles = [
-        mlines.Line2D([], [], color=LANG_PALETTE[l], linewidth=3, marker='o',
-                      markersize=7, label=l)
-        for l in all_langs
+    
+    # Legenda unica fora dos subplots
+    handles = [
+        mlines.Line2D([], [], color=LANG_PALETTE[l], linewidth=2.5,
+                      marker='o', markersize=6, label=l)
+        for l in LANG_PALETTE
     ]
-    impl_handles = [
-        mlines.Line2D([], [], color='#444',
-                      linestyle=IMPL_STYLE[c]['linestyle'],
-                      marker=IMPL_STYLE[c]['marker'],
-                      linewidth=2.5, markersize=7,
-                      label=IMPL_LABEL[c])
-        for c in all_impls
-    ]
-    l1 = leg_ax.legend(handles=lang_handles, title='Linguagem (cor)',
-                       loc='upper left', bbox_to_anchor=(0.05, 0.95),
-                       fontsize=12, title_fontsize=13, frameon=True)
-    leg_ax.add_artist(l1)
-    leg_ax.legend(handles=impl_handles, title='Implementacao (estilo)',
-                  loc='upper left', bbox_to_anchor=(0.55, 0.95),
-                  fontsize=12, title_fontsize=13, frameon=True)
+    fig.legend(
+        handles=handles, title='Linguagem',
+        loc='center right', bbox_to_anchor=(0.99, 0.50),
+        fontsize=10, title_fontsize=11,
+        frameon=True, framealpha=0.95,
+    )
 
-    fig.suptitle('Crescimento: ciclos de CPU vs iteracoes (todos os algoritmos)',
-                 fontsize=18, fontweight='bold', y=0.995)
-    fig.text(0.5, 0.005,
-             f'Cada ponto: media de {runs_per_point} runs. Barras = std em Y. '
-             f'Eixos log. Seed=42. Freq CPU mediana = {freq_ghz:.3f} GHz '
-             f'(1 ciclo = {1/freq_ghz:.3f} ns).',
-             ha='center', fontsize=10, color='#555', style='italic')
-    plt.tight_layout(rect=[0, 0.015, 1, 0.985])
+    fig.suptitle(
+        'Crescimento: ciclos de CPU vs iteracoes\n(cada coluna = uma implementacao)',
+        fontsize=16, fontweight='bold', y=0.98
+    )
+    fig.text(
+        0.47, 0.01,
+        f'Eixo Y compartilhado por linha. Eixos log. Seed=42. '
+        f'Freq CPU = {freq_ghz:.3f} GHz (1 ciclo = {1/freq_ghz:.3f} ns).',
+        ha='center', fontsize=9, color='#555', style='italic'
+    )
+
     combo_path = OUT_DIR / "growth_all_algorithms.png"
-    plt.savefig(combo_path, dpi=160, bbox_inches='tight', facecolor='#fafafa')
+    plt.savefig(combo_path, dpi=220, bbox_inches='tight', facecolor='#fafafa')
     plt.close(fig)
     print(f"  salvo: {combo_path}")
     print("\nPronto.")

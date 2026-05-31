@@ -4,11 +4,18 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import seaborn as sns
 from matplotlib.gridspec import GridSpec
+from pathlib import Path
+
+
+ROOT     = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT / 'bench_results'
+OUT_DIR  = ROOT / 'outputs'
+OUT_DIR.mkdir(exist_ok=True)
 
 # ── 1. Load & clean ──────────────────────────────────────────────────────────
 dfs = []
 for lang in ['ocaml', 'python', 'ruby', 'scheme', 'elixir', 'node']:
-    df = pd.read_csv(f'bench_results_{lang}.csv')
+    df = pd.read_csv(DATA_DIR / f'bench_results_{lang}.csv')
     df['Linguagem'] = lang.upper() if lang != 'node' else 'Node.js'
     dfs.append(df)
 
@@ -231,6 +238,6 @@ ax4.annotate('* Scheme/Elixir: picos de memória no Fatorial N=1000 (big-number 
              fontsize=8, color='gray', style='italic')
 
 # ── Save ─────────────────────────────────────────────────────────────────────
-plt.savefig('benchmark_comparativo.png',
+plt.savefig(OUT_DIR / 'benchmark_comparativo.png',
             dpi=160, bbox_inches='tight', facecolor='#fafafa')
 print("Saved!")
