@@ -41,4 +41,4 @@ python3 -u analysis/bench_growth_charts.py
 echo ""
 echo "=== Benchmarks e gráficos gerados com sucesso! ==="
 echo "CSVs em: bench_results/"
-echo "PNGs em: outputs/"c
+echo "PNGs em: outputs/"
