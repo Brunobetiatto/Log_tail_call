@@ -27,14 +27,14 @@ echo "--- OCaml ---"
 ocamlopt -o languages/test_ocaml unix.cmxa languages/test.ml
 ./languages/test_ocaml
 
-# 3. Prepara o ambiente para os resultados visuais
+# 3. Gera os gráficos comparativos
 echo ""
 echo "=== Gerando gráficos ==="
-mkdir -p "analysis univariate plot"
+mkdir -p outputs
 
-# 4. Gera os gráficos novos (crescimento iterações vs ciclos de CPU)
-python3 -u outputs/bench_growth_charts.py
+python3 -u analysis/bench_charts.py
+python3 -u analysis/bench_growth_charts.py
 
 echo ""
 echo "=== Benchmarks e gráficos gerados com sucesso! ==="
-echo "PNGs em: outputs/growth_*.png"
+echo "PNGs em: outputs/"
