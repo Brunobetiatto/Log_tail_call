@@ -27,8 +27,7 @@ ESTRUTURA DO REPOSITÓRIO
 
     test.py       – Benchmark em Python 3. Implementa os 3 algoritmos nas
                     variantes Normal e Loop/Tail. Usa tracemalloc para medir
-                    memória e psutil para monitorar CPU. Escreve o CSV de saída
-                    no diretório de trabalho atual.
+                    memória e psutil para monitorar CPU.
                     Execução: python3 languages/test.py
                     Saída: bench_results_python.csv
 
@@ -89,7 +88,7 @@ ESTRUTURA DO REPOSITÓRIO
 
 
 ./outputs/
-    Figuras geradas a partir dos dados de benchmark e dos scripts de análise.
+    Figuras geradas a partir dos dados de benchmark pelos scripts em analysis/.
 
     1_tempo_normalizado.png   – Comparação de tempo de execução normalizado entre
                                 todas as linguagens e algoritmos (Python = 1,0 como base).
@@ -106,93 +105,92 @@ ESTRUTURA DO REPOSITÓRIO
     benchmark_comparativo.png – Visão comparativa geral (tempo, memória,
                                 escalabilidade) em uma única figura multi-painel.
 
-    bench_charts (1).py       – Script de geração dos 5 gráficos listados acima.
-                                Lê os CSVs da pasta bench_results/.
-                                Execução: python3 "outputs/bench_charts (1).py"
-                                (deve ser executado a partir da raiz do repositório)
 
-    bench_growth_charts.py    – Script secundário de geração de gráficos. Produz
-                                gráficos de crescimento log-log (ciclos de CPU vs.
-                                iterações) por algoritmo e uma figura combinada 3×2.
-                                Execução: python3 outputs/bench_growth_charts.py
+./analysis/
+    Scripts Python de análise e geração de gráficos. Leem os CSVs de
+    bench_results/ e escrevem as figuras em outputs/.
+
+    bench_charts.py           – Gera os 5 gráficos comparativos em outputs/
+                                (1_tempo_normalizado.png até benchmark_comparativo.png).
+                                Execução: python3 analysis/bench_charts.py
+                                (executar a partir da raiz do repositório)
+
+    bench_growth_charts.py    – Gera gráficos de crescimento log-log
+                                (ciclos de CPU vs. iterações) por algoritmo e
+                                uma figura combinada 3×2.
+                                Execução: python3 analysis/bench_growth_charts.py
                                 Saída: outputs/growth_*.png
 
 
 ./latex/
     Fonte LaTeX e saída compilada do documento de revisão bibliográfica.
-    
-    test.tex  – Fonte LaTeX. "Estado da Arte". Revisa TCO, Proper Tail Recursion e trabalhos relacionados.
-    main.bib  – Bibligrafia BibTeX (referências citadas em test.tex).
-    Estado da Arte.pdf  – PDF compilado do Estado da Arte.
+
+    test.tex             – Fonte LaTeX do Estado da Arte (estilo ABNT, português).
+                           Revisa TCO, Proper Tail Recursion e trabalhos relacionados.
+    main.bib             – Bibliografia BibTeX (referências citadas em test.tex).
+    Estado da Arte.pdf   – PDF compilado do Estado da Arte.
 
 
 CONFIGURAÇÃO E SCRIPTS DE EXECUÇÃO
 ------------------------------------
 
-bench_config.json
-    Configuração compartilhada do experimento. Documenta os valores do sweep
-    de iterações, número de runs por ponto (runs_per_point = 10), seed aleatória
-    (seed = 42), limite de tempo por medição (60 s) e o schema dos CSVs de saída.
-    Todos os scripts de benchmark seguem esta configuração para reprodutibilidade.
+  bench_config.json    Configuração central do experimento: seed=42,
+                       runs_per_point=10, timeout=60s, sweep de iterações
+                       e schema dos CSVs. Todos os scripts seguem este arquivo.
 
-run.sh
-    Script principal de orquestração. Executa todos os benchmarks em sequência,
-    compila o OCaml e gera os gráficos de crescimento via bench_growth_charts.py.
-    Uso: bash run.sh
-    Tempo estimado: 30–60 minutos (sweep completo, 10 runs por ponto).
+  run.sh               Orquestrador principal. Roda todos os benchmarks em
+                       sequência, compila o OCaml e gera os gráficos.
+                       Uso: bash run.sh   (~30–60 min)
 
-run_quick.sh
-    Script de validação rápida. Define BENCH_QUICK=1, reduzindo o sweep para
-    2 pontos e 2 runs por ponto. Útil para verificar se o pipeline funciona
-    antes de comprometer com uma execução longa.
-    Uso: bash run_quick.sh
-    Tempo estimado: 3–5 minutos.
+  run_quick.sh         Versão rápida: BENCH_QUICK=1, 2 pontos e 2 runs.
+                       Útil para validar o pipeline antes da execução completa.
+                       Uso: bash run_quick.sh   (~3–5 min)
 
-Dockerfile
-    Imagem Docker baseada em Ubuntu 22.04. Instala todos os runtimes necessários
-    (Python 3, Node.js LTS, Elixir, OCaml, Racket, Ruby), dependências Python
-    via requirements.txt e dependências Node.js via package.json.
-    O CMD padrão executa bash run.sh automaticamente ao iniciar o container.
+  Dockerfile           Imagem Ubuntu 22.04 com todos os runtimes instalados
+                       (Python, Node.js LTS, Elixir, OCaml, Racket, Ruby).
+                       Executa run.sh automaticamente ao iniciar o container.
 
-docker-compose.yml
-    Definição de serviço Docker Compose. Monta o diretório do projeto em /app
-    dentro do container para que os CSVs e figuras gerados sejam escritos de
-    volta no sistema de arquivos do host. Também monta /sys em modo leitura para
-    detecção precisa da frequência da CPU via psutil.
-    Uso: docker compose up --build
+  docker-compose.yml   Sobe o container e monta a pasta do projeto em /app,
+                       para que CSVs e figuras gerados apareçam no host.
+                       Uso: docker compose up --build
 
-requirements.txt
-    Dependências Python: psutil, matplotlib, pandas, numpy, seaborn.
-    Instalar: pip install -r requirements.txt
+  requirements.txt     Dependências Python: psutil, matplotlib, pandas,
+                       numpy, seaborn.
+                       Instalar: pip install -r requirements.txt
 
-package.json
-    Definição do pacote Node.js. Declara a dependência seedrandom (^3.0.5),
-    usada para semeadura reprodutível do PRNG em test.js.
-    Instalar: npm install
+  package.json         Dependência Node.js: seedrandom ^3.0.5 (PRNG
+                       reprodutível em test.js).
+                       Instalar: npm install
 
 
 COMO REPRODUZIR OS RESULTADOS
 -------------------------------
 
-Opção A – Docker (recomendado, ambiente totalmente isolado):
+  Opção A – Docker  (recomendado, ambiente isolado)
+  -------------------------------------------------
     docker compose up --build
-    Todos os benchmarks rodam automaticamente. Os CSVs e figuras são gravados
-    na pasta do projeto via o volume montado.
+    Os CSVs e figuras são gravados automaticamente na pasta do projeto.
 
-Opção B – Execução nativa (requer todos os runtimes instalados localmente):
-    pip install -r requirements.txt
-    npm install
-    bash run.sh          # execução completa (~30–60 min)
-    # ou
-    bash run_quick.sh    # validação do pipeline (~3–5 min)
+  Opção B – Execução nativa
+  --------------------------
+    1. pip install -r requirements.txt
+    2. npm install
+    3. bash run.sh              # completo (~30–60 min)
+       bash run_quick.sh        # validação rápida (~3–5 min)
 
-Opção C – Linguagem individual (qualquer benchmark pode rodar de forma isolada):
-    Consulte as descrições individuais acima. Cada script escreve seu CSV no
-    diretório de trabalho atual.
+    Para gerar apenas os gráficos (dados já coletados):
+       python3 analysis/bench_charts.py
+       python3 analysis/bench_growth_charts.py
 
-Parâmetros de execução:
-    Seed:                42 (todas as linguagens)
-    Runs por ponto:      10 (completo) | 2 (BENCH_QUICK=1)
-    Sweep de iterações:  10.000 / 30.000 / 100.000 / 300.000 / 1.000.000
-    Fatorial bignum:     200 / 500 / 1.000 / 3.000 / 10.000
-    Limites de segurança: timeout de 60 s, limite de RAM por linguagem
+  Opção C – Linguagem individual
+  --------------------------------
+    Cada script em languages/ pode ser executado de forma isolada.
+    O CSV de saída é gravado no diretório de trabalho atual.
+
+  Parâmetros do experimento
+  --------------------------
+    Seed                  42 (todas as linguagens)
+    Runs por ponto        10  (completo) | 2 (BENCH_QUICK=1)
+    Sweep de iterações    10.000 / 30.000 / 100.000 / 300.000 / 1.000.000
+    Fatorial bignum       200 / 500 / 1.000 / 3.000 / 10.000
+    Timeout por medição   60 s
